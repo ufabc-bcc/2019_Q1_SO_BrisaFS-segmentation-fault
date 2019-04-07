@@ -132,12 +132,12 @@ int compara_nome (const char *a, const char *b) {
 int armazena_data(int typeop, int inode){
     struct timeval time;
     gettimeofday(&time, NULL);
-    if(typeop == 0){ //moddificacao
+    if(typeop == 0){ //modificacao
         superbloco[inode].timestamp[0] = time.tv_sec;
         superbloco[inode].timestamp[1] = time.tv_sec;
 
         return 0;
-    }else{
+    }else if(typeop == 1){
         superbloco[inode].timestamp[1] = time.tv_sec;
         return 0;
     }
@@ -254,6 +254,7 @@ static int write_brisafs(const char *path, const char *buf, size_t size,
             // Cuidado! Não checa se a quantidade de bytes cabe no arquivo!
             memcpy(disco + DISCO_OFFSET(superbloco[i].bloco) + offset, buf, size);
             superbloco[i].tamanho = offset + size;
+            armazena_data(0, i);
             return size;
         }
     }
@@ -262,6 +263,7 @@ static int write_brisafs(const char *path, const char *buf, size_t size,
     for (int i = 0; i < N_SUPERBLOCKS; i++) {
         if (superbloco[i].bloco == 0) {//ninguem usando
             preenche_bloco (i, path, DIREITOS_PADRAO, size, i + 1, buf);
+            armazena_data(0, i);
             return size;
         }
     }
