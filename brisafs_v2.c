@@ -34,6 +34,8 @@
 #include <fuse.h>
 #include <string.h>
 #include <errno.h>
+#include <sys/time.h>
+#include <sys/stat.h>
 
 /* Tamnanho do bloco do dispositivo */
 #define TAM_BLOCO 4096
@@ -54,6 +56,7 @@ typedef char byte;
    por exemplo nome, direitos, tamanho, bloco inicial, ... */
 typedef struct {
     char nome[250];
+    uint32_t timestamp;
     uint16_t direitos;
     uint16_t tamanho;
     uint16_t bloco;
@@ -74,6 +77,8 @@ inode *superbloco;
 void preenche_bloco (int isuperbloco, const char *nome, uint16_t direitos,
                      uint16_t tamanho, uint16_t bloco, const byte *conteudo) {
     char *mnome = (char*)nome;
+    struct timeval time;
+    gettimeofday(&time, NULL);
     //Joga fora a(s) barras iniciais
     while (mnome[0] != '\0' && mnome[0] == '/')
         mnome++;
@@ -82,6 +87,7 @@ void preenche_bloco (int isuperbloco, const char *nome, uint16_t direitos,
     superbloco[isuperbloco].direitos = direitos;
     superbloco[isuperbloco].tamanho = tamanho;
     superbloco[isuperbloco].bloco = bloco;
+    superbloco[isuperbloco].timestamp = time.tv_sec;
     if (conteudo != NULL)
         memcpy(disco + DISCO_OFFSET(bloco), conteudo, tamanho);
     else
@@ -139,6 +145,7 @@ static int getattr_brisafs(const char *path, struct stat *stbuf) {
             stbuf->st_mode = S_IFREG | superbloco[i].direitos;
             stbuf->st_nlink = 1;
             stbuf->st_size = superbloco[i].tamanho;
+            stbuf->st_mtime = superbloco[i].timestamp;
             return 0; //OK, arquivo encontrado
         }
     }
