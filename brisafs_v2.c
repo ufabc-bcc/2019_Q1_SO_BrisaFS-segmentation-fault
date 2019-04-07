@@ -314,7 +314,7 @@ static int create_brisafs(const char *path, mode_t mode,
     //bloco vazio
     for (int i = 0; i < MAX_FILES; i++) {
         if (superbloco[i].bloco == 0) {//ninguem usando
-            preenche_bloco (i, path, DIREITOS_PADRAO, 0, i + 1, NULL);
+            preenche_bloco (i, path, DIREITOS_PADRAO, 64, i + 1, NULL);
             return 0;
         }
     }
