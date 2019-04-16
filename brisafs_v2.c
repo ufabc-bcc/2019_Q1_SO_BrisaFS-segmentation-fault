@@ -36,7 +36,9 @@
 #include <errno.h>
 #include <sys/time.h>
 #include <sys/stat.h>
-
+#include <dirent.h>
+#include <time.h>
+#include <unistd.h>
 
 /* Tamnanho do bloco do dispositivo */
 #define TAM_BLOCO 4096
@@ -67,6 +69,21 @@ typedef struct {
     gid_t groupown;
 } inode;
 
+enum {
+       mySFS_NONE,
+       mySFS_DIR,
+       mySFS_FILE,
+};
+
+/* Struct para conter a lista de diretórios*/
+ typedef struct direntry{
+ char *fname;
+ int dbit;
+ } dentr;
+ 
+ /* Definido na mão a quantidade de diretórios para 50*/
+dentr de[50];
+
 /* Disco - A variável abaixo representa um disco que pode ser acessado
    por blocos de tamanho TAM_BLOCO com um total de MAX_BLOCOS. Você
    deve substituir por um arquivo real e assim persistir os seus
@@ -79,6 +96,8 @@ inode *superbloco;
 #define DISCO_OFFSET(B) (B * TAM_BLOCO)
 
 int armazena_data(int typeop, int inode);
+
+char* string_substring(char str[], int start, int end);
 
 /* Preenche os campos do superbloco de índice isuperbloco */
 void preenche_bloco (int isuperbloco, const char *nome, uint16_t direitos,
@@ -98,6 +117,9 @@ void preenche_bloco (int isuperbloco, const char *nome, uint16_t direitos,
     else
         memset(disco + DISCO_OFFSET(bloco), 0, tamanho);
 }
+
+
+
 
 
 /* Para persistir o FS em um disco representado por um arquivo, talvez
@@ -129,6 +151,40 @@ int compara_nome (const char *a, const char *b) {
     return strcmp(ma, mb) == 0;
 }
 
+
+ static int mySFS_file_type(const char *path)
+{
+  int k,set=0,in = 0;
+  printf("\n 1 - %s is the path ANALISADO ",path);
+  for(k=0;k<50;k++)
+    {
+     printf("\n 2 - %s is the path ANALISADO --\n 3 - %s is the de[k].fname ANALISADO --\n 4 - %d eh o valor de K \n\n",path, de[k].fname, k);
+    if (de[k].fname != NULL){
+        if(compara_nome(path,de[k].fname)==1)
+            {
+                set=k;
+                in = 1;
+                printf("Entrou aki = \n");
+                break;
+            }
+            }
+    }
+    
+    if(de[set].dbit == 1 && in == 1 )
+    {
+        printf("returnung mySFS_dir = \n");
+        return mySFS_DIR;
+    }
+   if(strcmp(path,"/") == 0)
+    {
+        printf("DIRETORIO RAIZ?? = %s\n",path);
+        return mySFS_DIR;
+    }
+
+ return mySFS_NONE;
+}
+
+
 int armazena_data(int typeop, int inode){
     struct timeval time;
     gettimeofday(&time, NULL);
@@ -152,17 +208,21 @@ int armazena_data(int typeop, int inode){
 static int getattr_brisafs(const char *path, struct stat *stbuf) {
     memset(stbuf, 0, sizeof(struct stat));
 
+
     //Diretório raiz
     if (strcmp(path, "/") == 0) {
         stbuf->st_mode = S_IFDIR | 0755;
         stbuf->st_nlink = 2;
         return 0;
     }
-
-    //Busca arquivo na lista de inodes
+    
+        //Busca arquivo na lista de inodes
     for (int i = 0; i < N_SUPERBLOCKS; i++) {
         if (superbloco[i].bloco != 0 //Bloco sendo usado
             && compara_nome(superbloco[i].nome, path)) { //Nome bate
+
+            printf("\n 2 - superbloco[i].userown = %d -- getuid() = %d \n",superbloco[i].userown,getuid());
+
 
             stbuf->st_mode = S_IFREG | superbloco[i].direitos;
             stbuf->st_nlink = 1;
@@ -174,9 +234,22 @@ static int getattr_brisafs(const char *path, struct stat *stbuf) {
             return 0; //OK, arquivo encontrado
         }
     }
+   
+    //Busca arquivo na lista de diretórios
+    if (mySFS_file_type(path) == mySFS_DIR){
+        printf("\n getuid() = %d -- getgid() = %d \n",getuid(),getgid());
+        stbuf->st_uid = getuid();
+        stbuf->st_gid = getgid();
+        stbuf->st_atime = stbuf->st_mtime=time(NULL);
+        stbuf->st_mode = S_IFDIR | 0755;
+        stbuf->st_nlink = 2;
+        return 0; //OK, arquivo encontrado
+    }
 
     //Erro arquivo não encontrado
     return -ENOENT;
+    
+   
 }
 
 
@@ -187,6 +260,10 @@ static int readdir_brisafs(const char *path, void *buf, fuse_fill_dir_t filler,
                            off_t offset, struct fuse_file_info *fi) {
     (void) offset;
     (void) fi;
+    int i;
+
+    if (strcmp(path, "/") != 0)
+    return -ENOENT;
 
     filler(buf, ".", NULL, 0);
     filler(buf, "..", NULL, 0);
@@ -194,6 +271,16 @@ static int readdir_brisafs(const char *path, void *buf, fuse_fill_dir_t filler,
     for (int i = 0; i < N_SUPERBLOCKS; i++) {
         if (superbloco[i].bloco != 0) { //Bloco ocupado!
             filler(buf, superbloco[i].nome, NULL, 0);
+        }
+    }
+
+    //diretórios
+    for(i=0; i<50; i++)
+    {   
+        if (de[i].fname == NULL){
+        }else{
+            printf("\n 0 - READ DIR %s",de[i].fname);
+            filler(buf, de[i].fname, NULL, 0);
         }
     }
 
@@ -335,9 +422,41 @@ static int fsync_brisafs(const char *path, int isdatasync,
 /* Ajusta a data de acesso e modificação do arquivo com resolução de nanosegundos */
 static int utimens_brisafs(const char *path, const struct timespec ts[2]) {
     // Cuidado! O sistema BrisaFS não aceita horários. O seu deverá aceitar!
-    
+
+
     return 0;
 }
+
+static int mkdir_brisafs(const char *path, mode_t mode){
+   printf("\n 0 - MKDIR\n");
+
+    //busca posição vazia na lista de diretórios
+    for (int i = 0; i < 50; i++) {
+        printf("\nPosição analisada = %d - Conteudo da posicao = %s\n", i,de[i].fname);
+        if (de[i].fname == NULL) //ninguem usando
+        {   
+            char *dirname = (char*)path;   
+            int tamanho = strlen(path);
+            char *sub;    
+            
+            //remove a barra "/" caso exista uma na primeira posição
+            if (strcmp(dirname,"/")){
+                sub = string_substring(dirname, 1, tamanho);
+                de[i].fname = sub;
+                de[i].dbit = 1;
+            } else {
+                de[i].fname = dirname;
+                de[i].dbit = 1;
+            }  
+
+            printf("\nO Conteudo da posicao = %d agora eh = %s\n", i,de[i].fname);
+            return 0;
+        }
+    }
+
+    return 0;
+}
+
 
 static int chown_brisafs(const char *path, uid_t userowner, gid_t groupowner){
     printf("O GRUPO EH: %d\n", groupowner);
@@ -348,7 +467,7 @@ static int chown_brisafs(const char *path, uid_t userowner, gid_t groupowner){
         if (compara_nome(path, superbloco[i].nome)) {//achou!
             if(userowner != -1)
                 superbloco[i].userown = userowner;
-            
+
             if(groupowner != -1)
                 superbloco[i].groupown = groupowner;
 
@@ -358,7 +477,6 @@ static int chown_brisafs(const char *path, uid_t userowner, gid_t groupowner){
     //Arquivo não encontrado
     return -ENOENT;
 }
-
 
 /* Cria e abre o arquivo apontado por path. Se o arquivo não existir
    cria e depois abre*/
@@ -377,6 +495,57 @@ static int create_brisafs(const char *path, mode_t mode,
     return ENOSPC;
 }
 
+static int access_brisafs(const char *path, int mask)
+{
+   int k, flag= 0;
+   if (strcmp(path, "/") == 0)
+   {
+      return 0;
+   }
+     
+   for(k=0;k<50;k++)
+   {
+    if (de[k].fname != NULL){   
+      if(compara_nome(path,de[k].fname)==1){
+         flag = 1;
+      }
+    }
+   }
+   if(flag == 1)
+   {
+      return 0;
+   }
+
+else
+{
+   return -1;
+}
+
+}
+
+char* string_substring(char str[], int start, int end) {
+    int i, j;
+    char *sub; 
+     
+    // Verifica valores incompatíveis e 
+    // retorna NULL
+    if(start >= end || end > strlen(str)) {
+        return NULL;
+    }
+     
+    // Aloca memória para a substring
+    sub = (char *) malloc(sizeof(char) * (end - start + 1));
+     
+    // Copia a substring para a variável
+    for(i = start, j = 0; i < end; i++, j++) {
+        sub[j] = str[i];
+    }
+     
+    // Terminador de string
+    //sub[j] = '&#092;&#048;';
+     
+    return sub;
+}
 
 /* Esta estrutura contém os ponteiros para as operações implementadas
    no FS */
@@ -391,10 +560,13 @@ static struct fuse_operations fuse_brisafs = {
                                               .truncate	= truncate_brisafs,
                                               .utimens = utimens_brisafs,
                                               .write = write_brisafs,
-                                              .chown = chown_brisafs
+                                              .chown = chown_brisafs,
+                                              .mkdir = mkdir_brisafs,
+                                              .access  = access_brisafs,
 };
 
-int main(int argc, char *argv[]) {
+
+int main(int argc, char *argv[] ) {
 
     printf("Iniciando o BrisaFS...\n");
     printf("\t Tamanho máximo de arquivo = 1 bloco = %d bytes\n", TAM_BLOCO);
@@ -403,7 +575,21 @@ int main(int argc, char *argv[]) {
     printf("\t Número máximo de superbocos: %lu\n", N_SUPERBLOCKS);
     printf("\t Número máximo de arquivos: %lu\n", N_SUPERBLOCKS * MAX_FILES);
 
-    init_brisafs();
 
+    /* Cria 3 diretórios na mão para o inicio do programa */
+    char *diretorios[] = {"dir1", "dir2", "dir3"};
+    int j;
+
+    for(j=0; j < 3; j++)
+    {
+        de[j].fname = diretorios[j];
+        de[j].dbit = 1;
+    }
+
+    init_brisafs();
     return fuse_main(argc, argv, &fuse_brisafs, NULL);
 }
+
+
+
+
