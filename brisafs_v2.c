@@ -36,19 +36,24 @@
 #include <errno.h>
 #include <sys/time.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
-
+#define N_FILES 1152
 /* Tamnanho do bloco do dispositivo */
 #define TAM_BLOCO 4096
 /* A atual implementação utiliza apenas um bloco para todos os inodes
    de todos os arquivos do sistema. Ou seja, cria um limite rígido no
    número de arquivos e tamanho do dispositivo. */
+//Quantidade de arquivos por bloco
 #define MAX_FILES (TAM_BLOCO / sizeof(inode))
-/* QUANTIDADE DE SUPERBLOCKS PARA O SISTEMA GARANTIR NO MINIMO 1024 ARQUIVOS*/
-#define N_SUPERBLOCKS (1152 / MAX_FILES)
-/* 1 para o superbloco e o resto para os arquivos. Os arquivos nesta
+
+/* QUANTIDADE DE SUPERBLOCKS PARA O SISTEMA GARANTIR NO MINIMO N_FILES ARQUIVOS*/
+#define N_SUPERBLOCKS (N_FILES / MAX_FILES)
+
+/* N_SUPERBLOCKS para o superbloco e o resto para os BLOCOS DE ARQUIVOS(X SUPERBLOCOS PARA Y BLOCOS DE ARQUIVOS). Os arquivos nesta
    implementação também tem apenas 1 bloco no máximo de tamanho. */
-#define MAX_BLOCOS (N_SUPERBLOCKS + MAX_FILES)
+#define MAX_BLOCOS (N_SUPERBLOCKS + N_FILES)
+
 /* Parte da sua tarefa será armazenar e recuperar corretamente os
    direitos dos arquivos criados */
 #define DIREITOS_PADRAO 0644
@@ -78,7 +83,31 @@ inode *superbloco;
 
 #define DISCO_OFFSET(B) (B * TAM_BLOCO)
 
+//cabecalho funcao
 int armazena_data(int typeop, int inode);
+
+void salva_disco(){
+    FILE *file  = fopen("hdd1", "wb");
+    fwrite(disco,TAM_BLOCO,MAX_BLOCOS,file);
+    printf("Salvando arquivo HDD");
+    fclose(file);
+}
+
+int carrega_disco(){
+    size_t result;
+    size_t lSize;
+    if(access("hdd1", F_OK) != -1){
+        FILE *file = fopen("hdd1", "rb");
+        lSize = ftell(file);
+        result = fread(disco,TAM_BLOCO,MAX_BLOCOS,file);
+        fclose(file);
+        printf("Carregou");
+        if (result != lSize) {fputs ("Reading error",stderr);}
+        return 1;
+    }else{
+        return 0;
+    }
+}
 
 /* Preenche os campos do superbloco de índice isuperbloco */
 void preenche_bloco (int isuperbloco, const char *nome, uint16_t direitos,
@@ -97,6 +126,7 @@ void preenche_bloco (int isuperbloco, const char *nome, uint16_t direitos,
         memcpy(disco + DISCO_OFFSET(bloco), conteudo, tamanho);
     else
         memset(disco + DISCO_OFFSET(bloco), 0, tamanho);
+
 }
 
 
@@ -106,13 +136,22 @@ void preenche_bloco (int isuperbloco, const char *nome, uint16_t direitos,
    com os valores apropriados */
 void init_brisafs() {
     disco = calloc (MAX_BLOCOS, TAM_BLOCO);
-    superbloco = (inode*) disco; //posição 0
-    //Cria um arquivo na mão de boas vindas
-    char *nome = "UFABC SO 2019.txt";
-    //Cuidado! pois se tiver acentos em UTF8 uma letra pode ser mais que um byte
-    char *conteudo = "Adoro as aulas de SO da UFABC!\n";
-    //0 está sendo usado pelo superbloco. O primeiro livre é o posterior ao N_SUPERBLOCKS
-    preenche_bloco(0, nome, DIREITOS_PADRAO, strlen(conteudo), N_SUPERBLOCKS + 1, (byte*)conteudo);
+    
+    
+    if(carrega_disco() == 0){
+        //Cria um arquivo na mão de boas vindas caso nao haja disco
+        superbloco = (inode*) disco; //posição 0
+        char *nome = "UFABC SO 2019.txt";
+        //Cuidado! pois se tiver acentos em UTF8 uma letra pode ser mais que um byte
+        char *conteudo = "Adoro as aulas de SO da UFABC!\n";
+        //0 está sendo usado pelo superbloco. O primeiro livre é o posterior ao N_SUPERBLOCKS
+        preenche_bloco(0, nome, DIREITOS_PADRAO, strlen(conteudo), N_SUPERBLOCKS + 1, (byte*)conteudo);
+        
+    }else{
+        //aponta o superbloco para o inicio do disco
+        superbloco = (inode*) disco; //posição 0
+    }
+    
 }
 
 /* Devolve 1 caso representem o mesmo nome e 0 cc */
@@ -327,8 +366,6 @@ static int mknod_brisafs(const char *path, mode_t mode, dev_t rdev) {
    persistidas */
 static int fsync_brisafs(const char *path, int isdatasync,
                          struct fuse_file_info *fi) {
-    //Como tudo é em memória, não é preciso fazer nada.
-    // Cuidado! Você vai precisar jogar tudo que está só em memóri no disco
     return 0;
 }
 
@@ -377,6 +414,12 @@ static int create_brisafs(const char *path, mode_t mode,
     return ENOSPC;
 }
 
+static int release_brisafs(const char *path, struct fuse_file_info *fi){
+    salva_disco();
+    return 0;
+}
+
+
 
 /* Esta estrutura contém os ponteiros para as operações implementadas
    no FS */
@@ -391,7 +434,8 @@ static struct fuse_operations fuse_brisafs = {
                                               .truncate	= truncate_brisafs,
                                               .utimens = utimens_brisafs,
                                               .write = write_brisafs,
-                                              .chown = chown_brisafs
+                                              .chown = chown_brisafs,
+                                              .release = release_brisafs
 };
 
 int main(int argc, char *argv[]) {
@@ -402,6 +446,7 @@ int main(int argc, char *argv[]) {
     printf("\t Número máximo de arquivos por superboco: %lu\n", MAX_FILES);
     printf("\t Número máximo de superbocos: %lu\n", N_SUPERBLOCKS);
     printf("\t Número máximo de arquivos: %lu\n", N_SUPERBLOCKS * MAX_FILES);
+    printf("\t Tamanho do Disco %lu\n", sizeof(disco) * MAX_BLOCOS ); 
 
     init_brisafs();
 
