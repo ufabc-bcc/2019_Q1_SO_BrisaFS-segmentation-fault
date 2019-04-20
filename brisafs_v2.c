@@ -60,10 +60,19 @@
 
 typedef char byte;
 
+/*Estrurua caso o arquivo seja um diretorio*/
+typedef struct{
+    uint16_t id;
+    char nome[250];
+}dirbloco;
+
 /* Um inode guarda todas as informações relativas a um arquivo como
    por exemplo nome, direitos, tamanho, bloco inicial, ... */
 typedef struct {
+    uint16_t id;
     char nome[250];
+    mode_t type;
+    uint16_t link;
     uint32_t timestamp[2]; //0: Modificacao, 1: Acesso
     uint16_t direitos;
     uint16_t tamanho;
@@ -71,6 +80,9 @@ typedef struct {
     uid_t userown;
     gid_t groupown;
 } inode;
+
+
+
 
 /* Disco - A variável abaixo representa um disco que pode ser acessado
    por blocos de tamanho TAM_BLOCO com um total de MAX_BLOCOS. Você
@@ -101,7 +113,7 @@ int carrega_disco(){
         lSize = ftell(file);
         result = fread(disco,TAM_BLOCO,MAX_BLOCOS,file);
         fclose(file);
-        printf("Carregou");
+        printf("Carregou\n");
         if (result != lSize) {fputs ("Reading error",stderr);}
         return 1;
     }else{
@@ -111,16 +123,19 @@ int carrega_disco(){
 
 /* Preenche os campos do superbloco de índice isuperbloco */
 void preenche_bloco (int isuperbloco, const char *nome, uint16_t direitos,
-                     uint16_t tamanho, uint16_t bloco, const byte *conteudo) {
+                     uint16_t tamanho, uint16_t bloco, const byte *conteudo, mode_t type) {
     char *mnome = (char*)nome;
     //Joga fora a(s) barras iniciais
     while (mnome[0] != '\0' && mnome[0] == '/')
         mnome++;
-
+    
+    superbloco[isuperbloco].id = isuperbloco;
     strcpy(superbloco[isuperbloco].nome, mnome);
     superbloco[isuperbloco].direitos = direitos;
     superbloco[isuperbloco].tamanho = tamanho;
     superbloco[isuperbloco].bloco = bloco;
+    superbloco[isuperbloco].type = type;
+    superbloco[isuperbloco].link+=1;
     armazena_data(0, isuperbloco);
     if (conteudo != NULL)
         memcpy(disco + DISCO_OFFSET(bloco), conteudo, tamanho);
@@ -128,6 +143,29 @@ void preenche_bloco (int isuperbloco, const char *nome, uint16_t direitos,
         memset(disco + DISCO_OFFSET(bloco), 0, tamanho);
 
 }
+
+void preenche_bloco_dir (int isuperbloco, const char *nome, uint16_t direitos,
+                     uint16_t tamanho, uint16_t bloco, dirbloco *conteudo, mode_t type) {
+    char *mnome = (char*)nome;
+    //Joga fora a(s) barras iniciais
+    while (mnome[0] != '\0' && mnome[0] == '/')
+        mnome++;
+    
+    superbloco[isuperbloco].id = isuperbloco;
+    strcpy(superbloco[isuperbloco].nome, mnome);
+    superbloco[isuperbloco].direitos = direitos;
+    superbloco[isuperbloco].tamanho = tamanho;
+    superbloco[isuperbloco].bloco = bloco;
+    superbloco[isuperbloco].type = type;
+    superbloco[isuperbloco].link+=1;
+    armazena_data(0, isuperbloco);
+    if (conteudo != NULL)
+        memcpy(disco + DISCO_OFFSET(bloco), conteudo, tamanho);
+    else
+        memset(disco + DISCO_OFFSET(bloco), 0, tamanho);
+
+}
+
 
 
 /* Para persistir o FS em um disco representado por um arquivo, talvez
@@ -145,7 +183,7 @@ void init_brisafs() {
         //Cuidado! pois se tiver acentos em UTF8 uma letra pode ser mais que um byte
         char *conteudo = "Adoro as aulas de SO da UFABC!\n";
         //0 está sendo usado pelo superbloco. O primeiro livre é o posterior ao N_SUPERBLOCKS
-        preenche_bloco(0, nome, DIREITOS_PADRAO, strlen(conteudo), N_SUPERBLOCKS + 1, (byte*)conteudo);
+        preenche_bloco(0, nome, DIREITOS_PADRAO, strlen(conteudo), N_SUPERBLOCKS + 1, (byte*)conteudo, S_IFREG);
         
     }else{
         //aponta o superbloco para o inicio do disco
@@ -203,13 +241,14 @@ static int getattr_brisafs(const char *path, struct stat *stbuf) {
         if (superbloco[i].bloco != 0 //Bloco sendo usado
             && compara_nome(superbloco[i].nome, path)) { //Nome bate
 
-            stbuf->st_mode = S_IFREG | superbloco[i].direitos;
+            stbuf->st_mode = superbloco[i].type | superbloco[i].direitos;
             stbuf->st_nlink = 1;
             stbuf->st_size = superbloco[i].tamanho;
             stbuf->st_mtime = superbloco[i].timestamp[0];
             stbuf->st_atime = superbloco[i].timestamp[1];
             stbuf->st_uid = superbloco[i].userown;
             stbuf->st_gid = superbloco[i].groupown;
+            stbuf->st_nlink = superbloco[i].link;
             return 0; //OK, arquivo encontrado
         }
     }
@@ -217,6 +256,9 @@ static int getattr_brisafs(const char *path, struct stat *stbuf) {
     //Erro arquivo não encontrado
     return -ENOENT;
 }
+
+
+
 
 
 /* Devolve ao FUSE a estrutura completa do diretório indicado pelo
@@ -301,7 +343,7 @@ static int write_brisafs(const char *path, const char *buf, size_t size,
     //Acha o primeiro bloco vazio
     for (int i = 0; i < N_SUPERBLOCKS; i++) {
         if (superbloco[i].bloco == 0) {//ninguem usando
-            preenche_bloco (i, path, DIREITOS_PADRAO, size, i + 1, buf);
+            preenche_bloco (i, path, DIREITOS_PADRAO, size, i + 1, buf,S_IFREG);
             armazena_data(0, i);
             return size;
         }
@@ -333,7 +375,7 @@ static int truncate_brisafs(const char *path, off_t size) {
         //Acha o primeiro bloco vazio
         for (int i = 0; i < N_SUPERBLOCKS; i++) {
             if (superbloco[i].bloco == 0) {//ninguem usando
-                preenche_bloco (i, path, DIREITOS_PADRAO, size, i + 1, NULL);
+                preenche_bloco (i, path, DIREITOS_PADRAO, size, i + 1, NULL, S_IFREG);
                 break;
             }
         }
@@ -351,7 +393,7 @@ static int mknod_brisafs(const char *path, mode_t mode, dev_t rdev) {
         //Acha o primeiro bloco vazio
         for (int i = 0; i < N_SUPERBLOCKS; i++) {
             if (superbloco[i].bloco == 0) {//ninguem usando
-                preenche_bloco (i, path, DIREITOS_PADRAO, 0, i + 1, NULL);
+                preenche_bloco (i, path, DIREITOS_PADRAO, 0, i + 1, NULL,S_IFREG);
                 return 0;
             }
         }
@@ -407,7 +449,17 @@ static int create_brisafs(const char *path, mode_t mode,
     //bloco vazio
     for (int i = 0; i < N_SUPERBLOCKS; i++) {
         if (superbloco[i].bloco == 0) {//ninguem usando
-            preenche_bloco (i, path, DIREITOS_PADRAO, 64, i + 1, NULL);
+            preenche_bloco (i, path, DIREITOS_PADRAO, 64, i + 1, NULL,S_IFREG);
+            return 0;
+        }
+    }
+    return ENOSPC;
+}
+
+static int mkdir_brisafs(const char *path, mode_t type){
+    for (int i = 0; i < N_SUPERBLOCKS; i++) {
+        if (superbloco[i].bloco == 0) {//ninguem usando
+            preenche_bloco_dir (i, path, DIREITOS_PADRAO, 64, i + 1, NULL,S_IFDIR);
             return 0;
         }
     }
@@ -435,7 +487,8 @@ static struct fuse_operations fuse_brisafs = {
                                               .utimens = utimens_brisafs,
                                               .write = write_brisafs,
                                               .chown = chown_brisafs,
-                                              .release = release_brisafs
+                                              .release = release_brisafs,
+                                              .mkdir = mkdir_brisafs
 };
 
 int main(int argc, char *argv[]) {
