@@ -30,7 +30,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <inttypes.h>
-/* Inclui a bibliteca fuse, base para o funcionamento do nosso FS */
 #include <fuse.h>
 #include <string.h>
 #include <errno.h>
@@ -38,29 +37,37 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#define N_FILES 1152
-/* Tamnanho do bloco do dispositivo */
+/* Número máximo de arquivos */
+#define N_FILES 1024
+/* Tamanho máximo de um arquivo */
+#define MAX_FILE_SIZE 64000000
+/* Tamanho do bloco do dispositivo */
 #define TAM_BLOCO 4096
-/* A atual implementação utiliza apenas um bloco para todos os inodes
-   de todos os arquivos do sistema. Ou seja, cria um limite rígido no
-   número de arquivos e tamanho do dispositivo. */
-//Quantidade de arquivos por bloco
+
+/* Quantidade de arquivos por bloco */
 #define MAX_FILES (TAM_BLOCO / sizeof(inode))
 
-/* QUANTIDADE DE SUPERBLOCKS PARA O SISTEMA GARANTIR NO MINIMO N_FILES ARQUIVOS*/
-#define N_SUPERBLOCKS (N_FILES / MAX_FILES)
+/* Quantidade mínima de superblocks para comportar todos os inodes */
+/* Forçar o arredonamento para cima: q = x/y = 1+((x-1)/y) */
+#define N_SUPERBLOCKS 1+((N_FILES-1) / MAX_FILES)
 
-/* N_SUPERBLOCKS para o superbloco e o resto para os BLOCOS DE ARQUIVOS(X SUPERBLOCOS PARA Y BLOCOS DE ARQUIVOS). Os arquivos nesta
-   implementação também tem apenas 1 bloco no máximo de tamanho. */
-#define MAX_BLOCOS (N_SUPERBLOCKS + N_FILES)
+/* Quantidade mínima de blocos para armazenar um arquivo de tamanho MAX_FILE_SIZE*/
+/* Forçar o arredonamento para cima: q = x/y = 1+((x-1)/y) */
+#define MIN_DATABLOCKS 1+((MAX_FILE_SIZE-1) / TAM_BLOCO)
 
-/* Parte da sua tarefa será armazenar e recuperar corretamente os
-   direitos dos arquivos criados */
+/* Quantidade de blocos necessário para a tabela FAT */
+/* Forçar o arredonamento para cima: q = x/y = 1+((x-1)/y) */
+#define FAT_BLOCOS  1+((MIN_DATABLOCKS-1) / (TAM_BLOCO / sizeof(uint16_t)))
+
+/* Total de blocos necessários para o sistema de arquivos */
+#define MAX_BLOCOS (N_SUPERBLOCKS + FAT_BLOCOS + MIN_DATABLOCKS)
+
+/* Direitos -rw-r--r-- */
 #define DIREITOS_PADRAO 0644
 
 typedef char byte;
 
-/*Estrurua caso o arquivo seja um diretorio*/
+/*Estrutura caso o arquivo seja um diretorio*/
 typedef struct{
     uint16_t id;
     char nome[250];
@@ -72,22 +79,17 @@ typedef struct {
     uint16_t id;
     char nome[250];
     mode_t type;
-    uint16_t link;
     uint32_t timestamp[2]; //0: Modificacao, 1: Acesso
     uint16_t direitos;
     uint16_t tamanho;
     uint16_t bloco;
     uid_t userown;
     gid_t groupown;
+    char parent[250];
 } inode;
 
-
-
-
 /* Disco - A variável abaixo representa um disco que pode ser acessado
-   por blocos de tamanho TAM_BLOCO com um total de MAX_BLOCOS. Você
-   deve substituir por um arquivo real e assim persistir os seus
-   dados! */
+   por blocos de tamanho TAM_BLOCO com um total de MAX_BLOCOS. */
 byte *disco;
 
 //guarda os inodes dos arquivos
@@ -97,37 +99,43 @@ inode *superbloco;
 
 //cabecalho funcao
 int armazena_data(int typeop, int inode);
+int quebra_nome (const char *path, char **name, char **parent);
+
 
 void salva_disco(){
-    FILE *file  = fopen("hdd1", "wb");
-    fwrite(disco,TAM_BLOCO,MAX_BLOCOS,file);
-    printf("Salvando arquivo HDD");
-    fclose(file);
+    FILE *file  = fopen ("hdd1", "wb");
+    fwrite (disco, TAM_BLOCO, MAX_BLOCOS, file);
+    printf ("Salvando arquivo HDD\n");
+    fclose (file);
 }
 
-int carrega_disco(){
+int carrega_disco() {
     size_t result;
     size_t lSize;
-    if(access("hdd1", F_OK) != -1){
-        FILE *file = fopen("hdd1", "rb");
-        lSize = ftell(file);
-        result = fread(disco,TAM_BLOCO,MAX_BLOCOS,file);
-        fclose(file);
-        printf("Carregou\n");
-        if (result != lSize) {fputs ("Reading error",stderr);}
+    if (access("hdd1", F_OK) == 0){
+        FILE *file = fopen ("hdd1", "rb");
+        lSize = ftell (file);
+        result = fread (disco,TAM_BLOCO,MAX_BLOCOS,file);
+        fclose (file);
+        printf ("Carregou\n");
+        if (result != lSize)
+          fputs ("Reading error", stderr);
         return 1;
-    }else{
+    } else
         return 0;
-    }
 }
 
 /* Preenche os campos do superbloco de índice isuperbloco */
 void preenche_bloco (int isuperbloco, const char *nome, uint16_t direitos,
-                     uint16_t tamanho, uint16_t bloco, const byte *conteudo, mode_t type) {
-    char *mnome = (char*)nome;
+                     uint16_t tamanho, uint16_t bloco, const byte *conteudo,
+                     mode_t type) {
+    char *mnome = NULL;
+    char *pai = NULL;
     //Joga fora a(s) barras iniciais
-    while (mnome[0] != '\0' && mnome[0] == '/')
-        mnome++;
+    //while (mnome[0] != '\0' && mnome[0] == '/')
+    //    mnome++;
+
+    quebra_nome(nome, &mnome, &pai);
 
     superbloco[isuperbloco].id = isuperbloco;
     strcpy(superbloco[isuperbloco].nome, mnome);
@@ -135,21 +143,28 @@ void preenche_bloco (int isuperbloco, const char *nome, uint16_t direitos,
     superbloco[isuperbloco].tamanho = tamanho;
     superbloco[isuperbloco].bloco = bloco;
     superbloco[isuperbloco].type = type;
-    superbloco[isuperbloco].link+=1;
-    armazena_data(0, isuperbloco);
+    strcpy(superbloco[isuperbloco].parent, pai);
+    armazena_data (0, isuperbloco);
+
+    free(mnome);
+    free(pai);
+
     if (conteudo != NULL)
         memcpy(disco + DISCO_OFFSET(bloco), conteudo, tamanho);
     else
         memset(disco + DISCO_OFFSET(bloco), 0, tamanho);
-
 }
 
 void preenche_bloco_dir (int isuperbloco, const char *nome, uint16_t direitos,
-                     uint16_t tamanho, uint16_t bloco, dirbloco *conteudo, mode_t type) {
-    char *mnome = (char*)nome;
+                     uint16_t tamanho, uint16_t bloco, dirbloco *conteudo,
+                     mode_t type) {
+    char *mnome = NULL;
+    char *pai = NULL;
     //Joga fora a(s) barras iniciais
-    while (mnome[0] != '\0' && mnome[0] == '/')
-        mnome++;
+    //while (mnome[0] != '\0' && mnome[0] == '/')
+    //    mnome++;
+
+    quebra_nome(nome, &mnome, &pai);
 
     superbloco[isuperbloco].id = isuperbloco;
     strcpy(superbloco[isuperbloco].nome, mnome);
@@ -157,16 +172,18 @@ void preenche_bloco_dir (int isuperbloco, const char *nome, uint16_t direitos,
     superbloco[isuperbloco].tamanho = tamanho;
     superbloco[isuperbloco].bloco = bloco;
     superbloco[isuperbloco].type = type;
-    superbloco[isuperbloco].link+=1;
+    strcpy(superbloco[isuperbloco].parent, pai);
     armazena_data(0, isuperbloco);
+
+    free(mnome);
+    free(pai);
+
     if (conteudo != NULL)
         memcpy(disco + DISCO_OFFSET(bloco), conteudo, tamanho);
     else
         memset(disco + DISCO_OFFSET(bloco), 0, tamanho);
 
 }
-
-
 
 /* Para persistir o FS em um disco representado por um arquivo, talvez
    seja necessário "formatar" o arquivo pegando o seu tamanho e
@@ -174,22 +191,47 @@ void preenche_bloco_dir (int isuperbloco, const char *nome, uint16_t direitos,
    com os valores apropriados */
 void init_brisafs() {
     disco = calloc (MAX_BLOCOS, TAM_BLOCO);
-
+    superbloco = (inode*) disco; //posição 0
 
     if(carrega_disco() == 0){
         //Cria um arquivo na mão de boas vindas caso nao haja disco
-        superbloco = (inode*) disco; //posição 0
         char *nome = "UFABC SO 2019.txt";
         //Cuidado! pois se tiver acentos em UTF8 uma letra pode ser mais que um byte
         char *conteudo = "Adoro as aulas de SO da UFABC!\n";
-        //0 está sendo usado pelo superbloco. O primeiro livre é o posterior ao N_SUPERBLOCKS
-        preenche_bloco(0, nome, DIREITOS_PADRAO, strlen(conteudo), N_SUPERBLOCKS + 1, (byte*)conteudo, S_IFREG);
-
-    }else{
-        //aponta o superbloco para o inicio do disco
-        superbloco = (inode*) disco; //posição 0
+        //0 está sendo usado pelo superbloco. O primeiro livre é o posterior ao N_SUPERBLOCKS e ao FAT_BLOCKS
+        preenche_bloco(0, nome, DIREITOS_PADRAO, strlen(conteudo),
+          N_SUPERBLOCKS + FAT_BLOCOS + 1, (byte*)conteudo, S_IFREG);
     }
+}
 
+int quebra_nome (const char *path, char **name, char **parent) {
+  char str[strlen(path)];
+  char *p;
+  char *n;
+  char *aux;
+
+  *parent = (char*)malloc(sizeof(char)*strlen(path));
+  *name = (char*)malloc(sizeof(char)*strlen(path));
+
+  strcpy(str, path);
+  p = "/";
+  n = strtok (str,"/");
+
+  while (1) {
+    aux = n;
+    n = strtok (NULL, "/");
+    if(n != NULL)
+      p = aux;
+    else {
+      n = aux;
+      break;
+    }
+  }
+
+  strcpy(*name, n);
+  strcpy(*parent, p);
+
+  return 0;
 }
 
 /* Devolve 1 caso representem o mesmo nome e 0 cc */
@@ -206,19 +248,19 @@ int compara_nome (const char *a, const char *b) {
     return strcmp(ma, mb) == 0;
 }
 
-int armazena_data(int typeop, int inode){
+int armazena_data (int typeop, int inode){
     struct timeval time;
-    gettimeofday(&time, NULL);
-    if(typeop == 0){ //modificacao
+    gettimeofday (&time, NULL);
+
+    if (typeop == 0) { //modificacao
         superbloco[inode].timestamp[0] = time.tv_sec;
         superbloco[inode].timestamp[1] = time.tv_sec;
 
         return 0;
-    }else if(typeop == 1){
+    } else if (typeop == 1) {
         superbloco[inode].timestamp[1] = time.tv_sec;
         return 0;
     }
-
     return 1; //Caso operacao invalide
 }
 
@@ -248,18 +290,12 @@ static int getattr_brisafs(const char *path, struct stat *stbuf) {
             stbuf->st_atime = superbloco[i].timestamp[1];
             stbuf->st_uid = superbloco[i].userown;
             stbuf->st_gid = superbloco[i].groupown;
-            stbuf->st_nlink = superbloco[i].link;
             return 0; //OK, arquivo encontrado
         }
     }
-
     //Erro arquivo não encontrado
     return -ENOENT;
 }
-
-
-
-
 
 /* Devolve ao FUSE a estrutura completa do diretório indicado pelo
    parâmetro path. Devolve 0 em caso de sucesso ou um código de
@@ -343,7 +379,8 @@ static int write_brisafs(const char *path, const char *buf, size_t size,
     //Acha o primeiro bloco vazio
     for (int i = 0; i < N_SUPERBLOCKS; i++) {
         if (superbloco[i].bloco == 0) {//ninguem usando
-            preenche_bloco (i, path, DIREITOS_PADRAO, size, i + 1, buf,S_IFREG);
+            preenche_bloco (i, path, DIREITOS_PADRAO, size, N_SUPERBLOCKS +
+              FAT_BLOCOS + i + 1, buf,S_IFREG);
             armazena_data(0, i);
             return size;
         }
@@ -391,7 +428,8 @@ static int truncate_brisafs(const char *path, off_t size) {
         //Acha o primeiro bloco vazio
         for (int i = 0; i < N_SUPERBLOCKS; i++) {
             if (superbloco[i].bloco == 0) {//ninguem usando
-                preenche_bloco (i, path, DIREITOS_PADRAO, size, i + 1, NULL, S_IFREG);
+                preenche_bloco (i, path, DIREITOS_PADRAO, size, N_SUPERBLOCKS +
+                  FAT_BLOCOS + i + 1, NULL, S_IFREG);
                 break;
             }
         }
@@ -409,7 +447,8 @@ static int mknod_brisafs(const char *path, mode_t mode, dev_t rdev) {
         //Acha o primeiro bloco vazio
         for (int i = 0; i < N_SUPERBLOCKS; i++) {
             if (superbloco[i].bloco == 0) {//ninguem usando
-                preenche_bloco (i, path, DIREITOS_PADRAO, 0, i + 1, NULL,S_IFREG);
+                preenche_bloco (i, path, DIREITOS_PADRAO, 0, N_SUPERBLOCKS +
+                  FAT_BLOCOS + i + 1, NULL,S_IFREG);
                 return 0;
             }
         }
@@ -465,7 +504,8 @@ static int create_brisafs(const char *path, mode_t mode,
     //bloco vazio
     for (int i = 0; i < N_SUPERBLOCKS; i++) {
         if (superbloco[i].bloco == 0) {//ninguem usando
-            preenche_bloco (i, path, DIREITOS_PADRAO, 64, i + 1, NULL,S_IFREG);
+            preenche_bloco (i, path, DIREITOS_PADRAO, 64, N_SUPERBLOCKS +
+              FAT_BLOCOS + i + 1, NULL,S_IFREG);
             return 0;
         }
     }
@@ -475,7 +515,8 @@ static int create_brisafs(const char *path, mode_t mode,
 static int mkdir_brisafs(const char *path, mode_t type){
     for (int i = 0; i < N_SUPERBLOCKS; i++) {
         if (superbloco[i].bloco == 0) {//ninguem usando
-            preenche_bloco_dir (i, path, DIREITOS_PADRAO, 64, i + 1, NULL,S_IFDIR);
+            preenche_bloco_dir (i, path, DIREITOS_PADRAO, 64, N_SUPERBLOCKS +
+              FAT_BLOCOS + i + 1, NULL,S_IFDIR);
             return 0;
         }
     }
