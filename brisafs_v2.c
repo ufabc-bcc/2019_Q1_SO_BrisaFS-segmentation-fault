@@ -55,12 +55,8 @@
 /* Forçar o arredonamento para cima: q = x/y = 1+((x-1)/y) */
 #define MIN_DATABLOCKS 1+((MAX_FILE_SIZE-1) / TAM_BLOCO)
 
-/* Quantidade de blocos necessário para a tabela FAT */
-/* Forçar o arredonamento para cima: q = x/y = 1+((x-1)/y) */
-#define FAT_BLOCOS  1+((MIN_DATABLOCKS-1) / (TAM_BLOCO / sizeof(uint16_t)))
-
 /* Total de blocos necessários para o sistema de arquivos */
-#define MAX_BLOCOS (N_SUPERBLOCKS + FAT_BLOCOS + MIN_DATABLOCKS)
+#define MAX_BLOCOS (N_SUPERBLOCKS + MIN_DATABLOCKS)
 
 /* Direitos -rw-r--r-- */
 #define DIREITOS_PADRAO 0644
@@ -200,12 +196,12 @@ void init_brisafs() {
         char *conteudo = "Adoro as aulas de SO da UFABC!\n";
         //0 está sendo usado pelo superbloco. O primeiro livre é o posterior ao N_SUPERBLOCKS e ao FAT_BLOCKS
         preenche_bloco(0, nome, DIREITOS_PADRAO, strlen(conteudo),
-          N_SUPERBLOCKS + FAT_BLOCOS + 1, (byte*)conteudo, S_IFREG);
+          N_SUPERBLOCKS + 1, (byte*)conteudo, S_IFREG);
     }
 }
 
 int quebra_nome (const char *path, char **name, char **parent) {
-  char str[strlen(path)];
+  char str[1000];
   char *p;
   char *n;
   char *aux;
@@ -236,16 +232,35 @@ int quebra_nome (const char *path, char **name, char **parent) {
 
 /* Devolve 1 caso representem o mesmo nome e 0 cc */
 int compara_nome (const char *a, const char *b) {
-    char *ma = (char*)a;
-    char *mb = (char*)b;
-    //Joga fora barras iniciais
-    while (ma[0] != '\0' && ma[0] == '/')
-        ma++;
-    while (mb[0] != '\0' && mb[0] == '/')
-        mb++;
-    //Cuidado! Pode ser necessário jogar fora também barras repetidas internas
-    //quando tiver diretórios
-    return strcmp(ma, mb) == 0;
+    char *ma = NULL;
+    char *mb = NULL;
+    //Joga fora a(s) barras iniciais
+    //while (mnome[0] != '\0' && mnome[0] == '/')
+    //    mnome++;
+
+    quebra_nome(b, &ma, &mb);
+
+    return strcmp(a, ma) == 0;
+    // Joga fora barras iniciais
+    // while (ma[0] != '\0' && ma[0] == '/')
+    //    ma++;
+    // while (mb[0] != '\0' && mb[0] == '/')
+    //    mb++;
+    // Cuidado! Pode ser necessário jogar fora também barras repetidas internas
+    // quando tiver diretórios
+    // return strcmp(ma, mb) == 0;
+}
+
+int compara_pai (const char *a, const char *b) {
+    char *ma = NULL;
+    char *mb = NULL;
+    //Joga fora a(s) barras iniciais
+    //while (mnome[0] != '\0' && mnome[0] == '/')
+    //    mnome++;
+
+    quebra_nome(b, &ma, &mb);
+
+    return strcmp(a, mb) == 0;
 }
 
 int armazena_data (int typeop, int inode){
@@ -281,7 +296,8 @@ static int getattr_brisafs(const char *path, struct stat *stbuf) {
     //Busca arquivo na lista de inodes
     for (int i = 0; i < N_SUPERBLOCKS; i++) {
         if (superbloco[i].bloco != 0 //Bloco sendo usado
-            && compara_nome(superbloco[i].nome, path)) { //Nome bate
+            && compara_nome(superbloco[i].nome, path)
+            && compara_pai(superbloco[i].parent, path)) { //Nome bate
 
             stbuf->st_mode = superbloco[i].type | superbloco[i].direitos;
             stbuf->st_nlink = 1;
@@ -380,7 +396,7 @@ static int write_brisafs(const char *path, const char *buf, size_t size,
     for (int i = 0; i < N_SUPERBLOCKS; i++) {
         if (superbloco[i].bloco == 0) {//ninguem usando
             preenche_bloco (i, path, DIREITOS_PADRAO, size, N_SUPERBLOCKS +
-              FAT_BLOCOS + i + 1, buf,S_IFREG);
+              i + 1, buf,S_IFREG);
             armazena_data(0, i);
             return size;
         }
@@ -429,7 +445,7 @@ static int truncate_brisafs(const char *path, off_t size) {
         for (int i = 0; i < N_SUPERBLOCKS; i++) {
             if (superbloco[i].bloco == 0) {//ninguem usando
                 preenche_bloco (i, path, DIREITOS_PADRAO, size, N_SUPERBLOCKS +
-                  FAT_BLOCOS + i + 1, NULL, S_IFREG);
+                  i + 1, NULL, S_IFREG);
                 break;
             }
         }
@@ -448,7 +464,7 @@ static int mknod_brisafs(const char *path, mode_t mode, dev_t rdev) {
         for (int i = 0; i < N_SUPERBLOCKS; i++) {
             if (superbloco[i].bloco == 0) {//ninguem usando
                 preenche_bloco (i, path, DIREITOS_PADRAO, 0, N_SUPERBLOCKS +
-                  FAT_BLOCOS + i + 1, NULL,S_IFREG);
+                  i + 1, NULL,S_IFREG);
                 return 0;
             }
         }
@@ -505,7 +521,7 @@ static int create_brisafs(const char *path, mode_t mode,
     for (int i = 0; i < N_SUPERBLOCKS; i++) {
         if (superbloco[i].bloco == 0) {//ninguem usando
             preenche_bloco (i, path, DIREITOS_PADRAO, 64, N_SUPERBLOCKS +
-              FAT_BLOCOS + i + 1, NULL,S_IFREG);
+              i + 1, NULL,S_IFREG);
             return 0;
         }
     }
@@ -516,7 +532,7 @@ static int mkdir_brisafs(const char *path, mode_t type){
     for (int i = 0; i < N_SUPERBLOCKS; i++) {
         if (superbloco[i].bloco == 0) {//ninguem usando
             preenche_bloco_dir (i, path, DIREITOS_PADRAO, 64, N_SUPERBLOCKS +
-              FAT_BLOCOS + i + 1, NULL,S_IFDIR);
+              i + 1, NULL,S_IFDIR);
             return 0;
         }
     }
