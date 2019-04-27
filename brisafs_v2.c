@@ -36,6 +36,7 @@
 #include <sys/time.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <libgen.h>
 
 /* Número máximo de arquivos */
 #define N_FILES 1024
@@ -127,11 +128,12 @@ void preenche_bloco (int isuperbloco, const char *nome, uint16_t direitos,
                      mode_t type) {
     char *mnome = NULL;
     char *pai = NULL;
-    //Joga fora a(s) barras iniciais
-    //while (mnome[0] != '\0' && mnome[0] == '/')
-    //    mnome++;
 
     quebra_nome(nome, &mnome, &pai);
+
+		printf("Path: %s/n", nome);
+		printf("Nome: %s/n", mnome);
+		printf("Pai: %s/n", pai);
 
     superbloco[isuperbloco].id = isuperbloco;
     strcpy(superbloco[isuperbloco].nome, mnome);
@@ -156,9 +158,6 @@ void preenche_bloco_dir (int isuperbloco, const char *nome, uint16_t direitos,
                      mode_t type) {
     char *mnome = NULL;
     char *pai = NULL;
-    //Joga fora a(s) barras iniciais
-    //while (mnome[0] != '\0' && mnome[0] == '/')
-    //    mnome++;
 
     quebra_nome(nome, &mnome, &pai);
 
@@ -191,78 +190,72 @@ void init_brisafs() {
 
     if(carrega_disco() == 0){
         //Cria um arquivo na mão de boas vindas caso nao haja disco
-        char *nome = "UFABC SO 2019.txt";
+        char *nome = "/UFABC SO 2019.txt";
         //Cuidado! pois se tiver acentos em UTF8 uma letra pode ser mais que um byte
         char *conteudo = "Adoro as aulas de SO da UFABC!\n";
-        //0 está sendo usado pelo superbloco. O primeiro livre é o posterior ao N_SUPERBLOCKS e ao FAT_BLOCKS
+        //0 está sendo usado pelo superbloco. O primeiro livre é o posterior ao N_SUPERBLOCKS
         preenche_bloco(0, nome, DIREITOS_PADRAO, strlen(conteudo),
           N_SUPERBLOCKS + 1, (byte*)conteudo, S_IFREG);
     }
 }
 
+/* Recebe o path de um arquivo e retorna o nome do arquivo e o diretorio pai*/
 int quebra_nome (const char *path, char **name, char **parent) {
-  char str[1000];
-  char *p;
-  char *n;
-  char *aux;
+  char* c1 = strdup(path);
+	char* c2 = strdup(path);
+	
+	*parent = (char*)malloc(sizeof(char)*strlen(c1));
+  *name = (char*)malloc(sizeof(char)*strlen(c1));
+	if (parent == NULL || name == NULL)
+		return 1;
+	
+	char* n = basename(c1);
+	char* p = basename(dirname(c2));
+	if (p == NULL || n == NULL)
+		return 2;
 
-  *parent = (char*)malloc(sizeof(char)*strlen(path));
-  *name = (char*)malloc(sizeof(char)*strlen(path));
-
-  strcpy(str, path);
-  p = "/";
-  n = strtok (str,"/");
-
-  while (1) {
-    aux = n;
-    n = strtok (NULL, "/");
-    if(n != NULL)
-      p = aux;
-    else {
-      n = aux;
-      break;
-    }
-  }
-
-  strcpy(*name, n);
-  strcpy(*parent, p);
+	strcpy(*name, n);
+	strcpy(*parent, p);
 
   return 0;
 }
 
 /* Devolve 1 caso representem o mesmo nome e 0 cc */
-int compara_nome (const char *a, const char *b) {
-    char *ma = NULL;
-    char *mb = NULL;
-    //Joga fora a(s) barras iniciais
-    //while (mnome[0] != '\0' && mnome[0] == '/')
-    //    mnome++;
+int compara_nome (const char *path, const char *nome) {
+    char *mn = NULL;
+    char *mp = NULL;
 
-    quebra_nome(b, &ma, &mb);
-
-    return strcmp(a, ma) == 0;
-    // Joga fora barras iniciais
-    // while (ma[0] != '\0' && ma[0] == '/')
-    //    ma++;
-    // while (mb[0] != '\0' && mb[0] == '/')
-    //    mb++;
-    // Cuidado! Pode ser necessário jogar fora também barras repetidas internas
-    // quando tiver diretórios
-    // return strcmp(ma, mb) == 0;
+    quebra_nome (path, &mn, &mp);
+		
+		if (strcmp(nome, mn) == 0) {
+			free(mn);
+			free(mp);
+			return 1;
+		}
+		
+		free(mn);
+		free(mp);
+    return 0;
 }
 
-int compara_pai (const char *a, const char *b) {
-    char *ma = NULL;
-    char *mb = NULL;
-    //Joga fora a(s) barras iniciais
-    //while (mnome[0] != '\0' && mnome[0] == '/')
-    //    mnome++;
+int compara_pai (const char *path, const char *nome) {
+    char *mn = NULL;
+    char *mp = NULL;
 
-    quebra_nome(b, &ma, &mb);
+    quebra_nome(path, &mn, &mp);
 
-    return strcmp(a, mb) == 0;
+		if (strcmp(nome, mp) == 0) {
+			free(mn);
+			free(mp);
+			return 1;
+		}
+		
+		free(mn);
+		free(mp);
+    return 0;
 }
 
+/*
 int compara (const char *a, const char *b) {
     char *ma = (char*)a;
     char *mb = (char*)b;
@@ -274,7 +267,7 @@ int compara (const char *a, const char *b) {
     //Cuidado! Pode ser necessário jogar fora também barras repetidas internas
     //quando tiver diretórios
     return strcmp(ma, mb) == 0;
-}
+}*/
 
 int armazena_data (int typeop, int inode){
     struct timeval time;
@@ -309,9 +302,7 @@ static int getattr_brisafs(const char *path, struct stat *stbuf) {
     //Busca arquivo na lista de inodes
     for (int i = 0; i < N_SUPERBLOCKS; i++) {
         if (superbloco[i].bloco != 0 //Bloco sendo usado
-            && compara_nome(superbloco[i].nome, path)
-            //&& compara(superbloco[i].parent, path)
-            ) { //Nome bate
+            && compara_nome (path, superbloco[i].nome)) { //Nome bate
 
             stbuf->st_mode = superbloco[i].type | superbloco[i].direitos;
             stbuf->st_nlink = 1;
@@ -339,7 +330,8 @@ static int readdir_brisafs(const char *path, void *buf, fuse_fill_dir_t filler,
     filler(buf, "..", NULL, 0);
 
     for (int i = 0; i < N_SUPERBLOCKS; i++) {
-        if (superbloco[i].bloco != 0 && compara(superbloco[i].parent,path)) { //Bloco ocupado!
+        if (superbloco[i].bloco != 0
+						&& compara_nome (path, superbloco[i].parent)) { //Bloco ocupado!
             filler(buf, superbloco[i].nome, NULL, 0);
         }
     }
@@ -377,8 +369,7 @@ static int read_brisafs(const char *path, char *buf, size_t size,
                 return len - offset;
             }
 
-            memcpy(buf,
-                   disco + DISCO_OFFSET(superbloco[i].bloco), size);
+            memcpy(buf, disco + DISCO_OFFSET(superbloco[i].bloco), size);
             return size;
         }
     }
@@ -410,7 +401,7 @@ static int write_brisafs(const char *path, const char *buf, size_t size,
     for (int i = 0; i < N_SUPERBLOCKS; i++) {
         if (superbloco[i].bloco == 0) {//ninguem usando
             preenche_bloco (i, path, DIREITOS_PADRAO, size, N_SUPERBLOCKS +
-              i + 1, buf,S_IFREG);
+              i + 1, buf, S_IFREG);
             armazena_data(0, i);
             return size;
         }
@@ -535,7 +526,7 @@ static int create_brisafs(const char *path, mode_t mode,
     for (int i = 0; i < N_SUPERBLOCKS; i++) {
         if (superbloco[i].bloco == 0) {//ninguem usando
             preenche_bloco (i, path, DIREITOS_PADRAO, 64, N_SUPERBLOCKS +
-              i + 1, NULL,S_IFREG);
+              i + 1, NULL, S_IFREG);
             return 0;
         }
     }
@@ -546,7 +537,7 @@ static int mkdir_brisafs(const char *path, mode_t type){
     for (int i = 0; i < N_SUPERBLOCKS; i++) {
         if (superbloco[i].bloco == 0) {//ninguem usando
             preenche_bloco_dir (i, path, DIREITOS_PADRAO, 64, N_SUPERBLOCKS +
-              i + 1, NULL,S_IFDIR);
+              i + 1, NULL, S_IFDIR);
             return 0;
         }
     }
@@ -554,17 +545,14 @@ static int mkdir_brisafs(const char *path, mode_t type){
 }
 
 
-static int chmod_brisafs(const char *path, mode_t mode)
-{
-
-for (int i = 0; i < N_SUPERBLOCKS; i++) {
-    if (compara(path, superbloco[i].nome)) {//achou!
-
-    superbloco[i].direitos = mode;
-    return 0;
+static int chmod_brisafs(const char *path, mode_t mode) {
+	for (int i = 0; i < N_SUPERBLOCKS; i++) {
+    if (compara_nome(path, superbloco[i].nome)) {//achou!
+    	superbloco[i].direitos = mode;
+    	return 0;
     }
-}
-return -errno;
+	}
+	return -errno;
 }
 
 
