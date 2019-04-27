@@ -263,6 +263,19 @@ int compara_pai (const char *a, const char *b) {
     return strcmp(a, mb) == 0;
 }
 
+int compara (const char *a, const char *b) {
+    char *ma = (char*)a;
+    char *mb = (char*)b;
+    //Joga fora barras iniciais
+    while (ma[0] != '\0' && ma[0] == '/')
+        ma++;
+    while (mb[0] != '\0' && mb[0] == '/')
+        mb++;
+    //Cuidado! Pode ser necessário jogar fora também barras repetidas internas
+    //quando tiver diretórios
+    return strcmp(ma, mb) == 0;
+}
+
 int armazena_data (int typeop, int inode){
     struct timeval time;
     gettimeofday (&time, NULL);
@@ -297,7 +310,8 @@ static int getattr_brisafs(const char *path, struct stat *stbuf) {
     for (int i = 0; i < N_SUPERBLOCKS; i++) {
         if (superbloco[i].bloco != 0 //Bloco sendo usado
             && compara_nome(superbloco[i].nome, path)
-            && compara_pai(superbloco[i].parent, path)) { //Nome bate
+            //&& compara(superbloco[i].parent, path)
+            ) { //Nome bate
 
             stbuf->st_mode = superbloco[i].type | superbloco[i].direitos;
             stbuf->st_nlink = 1;
@@ -325,7 +339,7 @@ static int readdir_brisafs(const char *path, void *buf, fuse_fill_dir_t filler,
     filler(buf, "..", NULL, 0);
 
     for (int i = 0; i < N_SUPERBLOCKS; i++) {
-        if (superbloco[i].bloco != 0) { //Bloco ocupado!
+        if (superbloco[i].bloco != 0 && compara(superbloco[i].parent,path)) { //Bloco ocupado!
             filler(buf, superbloco[i].nome, NULL, 0);
         }
     }
@@ -539,6 +553,21 @@ static int mkdir_brisafs(const char *path, mode_t type){
     return ENOSPC;
 }
 
+
+static int chmod_brisafs(const char *path, mode_t mode)
+{
+
+for (int i = 0; i < N_SUPERBLOCKS; i++) {
+    if (compara(path, superbloco[i].nome)) {//achou!
+
+    superbloco[i].direitos = mode;
+    return 0;
+    }
+}
+return -errno;
+}
+
+
 static int release_brisafs(const char *path, struct fuse_file_info *fi){
     salva_disco();
     return 0;
@@ -562,7 +591,8 @@ static struct fuse_operations fuse_brisafs = {
                                               .chown = chown_brisafs,
                                               .release = release_brisafs,
                                               .mkdir = mkdir_brisafs,
-                                              .unlink = unlink_brisafs
+                                              .unlink = unlink_brisafs,
+                                              .chmod = chmod_brisafs
 };
 
 int main(int argc, char *argv[]) {
