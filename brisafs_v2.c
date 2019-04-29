@@ -48,13 +48,13 @@
 /* Quantidade de arquivos por bloco */
 #define MAX_FILES (TAM_BLOCO / sizeof(inode))
 
-/* Quantidade mínima de superblocks para comportar todos os inodes */
-/* Forçar o arredonamento para cima: q = x/y = 1+((x-1)/y) */
-#define N_SUPERBLOCKS 1+((N_FILES-1) / MAX_FILES)
-
 /* Quantidade mínima de blocos para armazenar um arquivo de tamanho MAX_FILE_SIZE*/
 /* Forçar o arredonamento para cima: q = x/y = 1+((x-1)/y) */
-#define MIN_DATABLOCKS 1+((MAX_FILE_SIZE-1) / TAM_BLOCO)
+#define MIN_DATABLOCKS (4*(1+((MAX_FILE_SIZE-1) / TAM_BLOCO)))
+
+/* Quantidade mínima de superblocks para comportar todos os inodes */
+/* Forçar o arredonamento para cima: q = x/y = 1+((x-1)/y) */
+#define N_SUPERBLOCKS (1+((MIN_DATABLOCKS-1) / MAX_FILES))
 
 /* Total de blocos necessários para o sistema de arquivos */
 #define MAX_BLOCOS (N_SUPERBLOCKS + MIN_DATABLOCKS)
@@ -80,6 +80,7 @@ typedef struct {
     uint16_t direitos;
     uint16_t tamanho;
     uint16_t bloco;
+		uint16_t proxbloco;
     uid_t userown;
     gid_t groupown;
     char parent[250];
@@ -92,12 +93,15 @@ byte *disco;
 //guarda os inodes dos arquivos
 inode *superbloco;
 
+//Quantidade de blocos disponíveis em disco:
+int free_space = N_SUPERBLOCKS;
+
 #define DISCO_OFFSET(B) (B * TAM_BLOCO)
 
 //cabecalho funcao
 int armazena_data(int typeop, int inode);
 int quebra_nome (const char *path, char **name, char **parent);
-
+int compara_nome (const char *path, const char *nome);
 
 void salva_disco(){
     FILE *file  = fopen ("hdd1", "wb");
@@ -123,6 +127,99 @@ int carrega_disco() {
 }
 
 /* Preenche os campos do superbloco de índice isuperbloco */
+void preenche_bloco (const char *nome, uint16_t direitos, uint16_t tamanho, 
+										 const byte *conteudo, mode_t type) {
+  
+	int num_blocos = (1+((tamanho-1) / TAM_BLOCO));
+	
+	if (tamanho > MAX_FILE_SIZE) {
+		printf("Tamanho máximo de arquivo excedido!\n");
+		return;
+		
+	} else if (num_blocos > free_space) {
+		printf("Não há espaço suficiente em disco para este arquivo!\n");
+		return;
+		
+	} else {
+		int bloco_anterior;
+		
+		char *mnome = NULL;
+    char *pai = NULL;
+    
+    quebra_nome(nome, &mnome, &pai);
+    
+    for (int i = 0; i < N_SUPERBLOCKS; i++) {
+    	if (superbloco[i].bloco != 0 && compara_nome (pai, superbloco[i].parent)
+				  && compara_nome (mnome, superbloco[i].nome)) {
+				printf("O arquivo %s já existe!\n", mnome);
+				return;
+			}
+    }
+			
+		for (int k = 0; k < num_blocos; k++) {	
+			for (int i = 0; i < N_SUPERBLOCKS; i++) {
+      	if (superbloco[i].bloco == 0) { //bloco vazio
+        	if(k == 0) {
+						superbloco[i].id = i;
+    				strcpy(superbloco[i].nome, mnome);
+    				superbloco[i].direitos = direitos;
+    				superbloco[i].tamanho = tamanho;
+    				superbloco[i].bloco = N_SUPERBLOCKS + i + 1;
+    				superbloco[i].type = type;
+    				strcpy(superbloco[i].parent, pai);
+    				armazena_data (0, i);
+
+						superbloco[i].proxbloco = 0;
+						bloco_anterior = i;
+
+    				free(mnome);
+    				free(pai);
+
+    				if (conteudo != NULL) {
+							if (sizeof(conteudo) > TAM_BLOCO)
+      	 				memcpy(disco + DISCO_OFFSET(N_SUPERBLOCKS + i + 1), conteudo, TAM_BLOCO);
+							else
+								memcpy(disco + DISCO_OFFSET(N_SUPERBLOCKS + i + 1), conteudo, tamanho);
+    				} else {
+     	  			memset(disco + DISCO_OFFSET(N_SUPERBLOCKS + i + 1), 0, tamanho);
+						}
+						
+						free_space--;
+						break;
+
+					} else {
+						superbloco[i].id = i;
+    				//strcpy(superbloco[i].nome, mnome);
+    				//superbloco[i].direitos = direitos;
+   					//superbloco[i].tamanho = tamanho;
+    				superbloco[i].bloco = N_SUPERBLOCKS + i + 1;
+    				superbloco[i].type = type;
+    				//strcpy(superbloco[i].parent, pai);
+    				//armazena_data (0, i);
+						
+						superbloco[i].proxbloco = 0;
+						superbloco[bloco_anterior].proxbloco = i;
+						bloco_anterior = i;
+
+						if (sizeof(conteudo) > TAM_BLOCO)
+      	  		memcpy(disco + DISCO_OFFSET(N_SUPERBLOCKS + i + 1), 
+								conteudo + DISCO_OFFSET(k), TAM_BLOCO);
+						else
+							memcpy(disco + DISCO_OFFSET(N_SUPERBLOCKS + i + 1), 
+								conteudo + DISCO_OFFSET(k), tamanho);
+						
+						free_space--;
+						break;
+					}
+        }
+			}
+		}
+	}
+}
+
+
+/* Preenche os campos do superbloco de índice isuperbloco */
+/*
 void preenche_bloco (int isuperbloco, const char *nome, uint16_t direitos,
                      uint16_t tamanho, uint16_t bloco, const byte *conteudo,
                      mode_t type) {
@@ -130,10 +227,6 @@ void preenche_bloco (int isuperbloco, const char *nome, uint16_t direitos,
     char *pai = NULL;
 
     quebra_nome(nome, &mnome, &pai);
-
-		printf("Path: %s/n", nome);
-		printf("Nome: %s/n", mnome);
-		printf("Pai: %s/n", pai);
 
     superbloco[isuperbloco].id = isuperbloco;
     strcpy(superbloco[isuperbloco].nome, mnome);
@@ -179,6 +272,7 @@ void preenche_bloco_dir (int isuperbloco, const char *nome, uint16_t direitos,
         memset(disco + DISCO_OFFSET(bloco), 0, tamanho);
 
 }
+*/
 
 /* Para persistir o FS em um disco representado por um arquivo, talvez
    seja necessário "formatar" o arquivo pegando o seu tamanho e
@@ -194,8 +288,10 @@ void init_brisafs() {
         //Cuidado! pois se tiver acentos em UTF8 uma letra pode ser mais que um byte
         char *conteudo = "Adoro as aulas de SO da UFABC!\n";
         //0 está sendo usado pelo superbloco. O primeiro livre é o posterior ao N_SUPERBLOCKS
-        preenche_bloco(0, nome, DIREITOS_PADRAO, strlen(conteudo),
-          N_SUPERBLOCKS + 1, (byte*)conteudo, S_IFREG);
+        /*preenche_bloco(0, nome, DIREITOS_PADRAO, strlen(conteudo),
+          N_SUPERBLOCKS + 1, (byte*)conteudo, S_IFREG);*/
+        preenche_bloco(nome, DIREITOS_PADRAO, strlen(conteudo), 
+        	(byte*)conteudo, S_IFREG);
     }
 }
 
@@ -356,7 +452,8 @@ static int read_brisafs(const char *path, char *buf, size_t size,
     for (int i = 0; i < N_SUPERBLOCKS; i++) {
         if (superbloco[i].bloco == 0) //bloco vazio
             continue;
-        if (compara_nome(path, superbloco[i].nome)) {//achou!
+        if (compara_nome(path, superbloco[i].nome)
+        		&& compara_pai (path, superbloco[i].parent)) {//achou!
             size_t len = superbloco[i].tamanho;
             armazena_data(1, i);
             if (offset >= len) {//tentou ler além do fim do arquivo
@@ -388,7 +485,8 @@ static int write_brisafs(const char *path, const char *buf, size_t size,
         if (superbloco[i].bloco == 0) { //bloco vazio
             continue;
         }
-        if (compara_nome(path, superbloco[i].nome)) {//achou!
+        if (compara_nome(path, superbloco[i].nome)
+        		&& compara_pai (path, superbloco[i].parent)) {//achou!
             // Cuidado! Não checa se a quantidade de bytes cabe no arquivo!
             memcpy(disco + DISCO_OFFSET(superbloco[i].bloco) + offset, buf, size);
             superbloco[i].tamanho = offset + size;
@@ -398,6 +496,9 @@ static int write_brisafs(const char *path, const char *buf, size_t size,
     }
     //Se chegou aqui não achou. Entao cria
     //Acha o primeiro bloco vazio
+    preenche_bloco (path, DIREITOS_PADRAO, size, buf, S_IFREG);
+    return size;
+    /*
     for (int i = 0; i < N_SUPERBLOCKS; i++) {
         if (superbloco[i].bloco == 0) {//ninguem usando
             preenche_bloco (i, path, DIREITOS_PADRAO, size, N_SUPERBLOCKS +
@@ -406,6 +507,7 @@ static int write_brisafs(const char *path, const char *buf, size_t size,
             return size;
         }
     }
+    */
 
     return -EIO;
 }
@@ -437,7 +539,8 @@ static int truncate_brisafs(const char *path, off_t size) {
     int findex = -1;
     for(int i = 0; i < N_SUPERBLOCKS; i++) {
         if (superbloco[i].bloco != 0
-            && compara_nome(path, superbloco[i].nome)) {
+            && compara_nome(path, superbloco[i].nome)
+            && compara_pai (path, superbloco[i].parent)) {
             findex = i;
             break;
         }
@@ -447,6 +550,8 @@ static int truncate_brisafs(const char *path, off_t size) {
         return 0;
     } else {// Arquivo novo
         //Acha o primeiro bloco vazio
+        preenche_bloco (path, DIREITOS_PADRAO, size, NULL, S_IFREG);
+        /*
         for (int i = 0; i < N_SUPERBLOCKS; i++) {
             if (superbloco[i].bloco == 0) {//ninguem usando
                 preenche_bloco (i, path, DIREITOS_PADRAO, size, N_SUPERBLOCKS +
@@ -454,6 +559,7 @@ static int truncate_brisafs(const char *path, off_t size) {
                 break;
             }
         }
+        */
     }
     return 0;
 }
@@ -466,6 +572,9 @@ static int mknod_brisafs(const char *path, mode_t mode, dev_t rdev) {
         //mknod" para instruções de como pegar os direitos e demais
         //informações sobre os arquivos
         //Acha o primeiro bloco vazio
+        preenche_bloco (path, DIREITOS_PADRAO, 16, NULL, S_IFREG);
+        return 0;
+        /*
         for (int i = 0; i < N_SUPERBLOCKS; i++) {
             if (superbloco[i].bloco == 0) {//ninguem usando
                 preenche_bloco (i, path, DIREITOS_PADRAO, 0, N_SUPERBLOCKS +
@@ -473,6 +582,7 @@ static int mknod_brisafs(const char *path, mode_t mode, dev_t rdev) {
                 return 0;
             }
         }
+        */
         return ENOSPC;
     }
     return EINVAL;
@@ -495,12 +605,13 @@ static int utimens_brisafs(const char *path, const struct timespec ts[2]) {
 }
 
 static int chown_brisafs(const char *path, uid_t userowner, gid_t groupowner){
-    printf("O GRUPO EH: %d\n", groupowner);
-    printf("O USUARIO EH: %d\n", userowner);
+    printf("O GRUPO É: %d\n", groupowner);
+    printf("O USUARIO É: %d\n", userowner);
     for (int i = 0; i < N_SUPERBLOCKS; i++) {
         if (superbloco[i].bloco == 0) //bloco vazio
             continue;
-        if (compara_nome(path, superbloco[i].nome)) {//achou!
+        if (compara_nome(path, superbloco[i].nome)
+        		&& compara_pai (path, superbloco[i].parent)) {//achou!
             if(userowner != -1)
                 superbloco[i].userown = userowner;
 
@@ -523,6 +634,9 @@ static int create_brisafs(const char *path, mode_t mode,
     //cuidar disso Veja "man 2 mknod" para instruções de como pegar os
     //direitos e demais informações sobre os arquivos Acha o primeiro
     //bloco vazio
+    preenche_bloco (path, DIREITOS_PADRAO, 64, NULL, S_IFREG);
+    return 0;
+    /*
     for (int i = 0; i < N_SUPERBLOCKS; i++) {
         if (superbloco[i].bloco == 0) {//ninguem usando
             preenche_bloco (i, path, DIREITOS_PADRAO, 64, N_SUPERBLOCKS +
@@ -530,10 +644,14 @@ static int create_brisafs(const char *path, mode_t mode,
             return 0;
         }
     }
+    */
     return ENOSPC;
 }
 
 static int mkdir_brisafs(const char *path, mode_t type){
+    preenche_bloco (path, DIREITOS_PADRAO, 64, NULL, S_IFDIR);
+    return 0;
+    /*
     for (int i = 0; i < N_SUPERBLOCKS; i++) {
         if (superbloco[i].bloco == 0) {//ninguem usando
             preenche_bloco_dir (i, path, DIREITOS_PADRAO, 64, N_SUPERBLOCKS +
@@ -541,13 +659,15 @@ static int mkdir_brisafs(const char *path, mode_t type){
             return 0;
         }
     }
+    */
     return ENOSPC;
 }
 
 
 static int chmod_brisafs(const char *path, mode_t mode) {
 	for (int i = 0; i < N_SUPERBLOCKS; i++) {
-    if (compara_nome(path, superbloco[i].nome)) {//achou!
+    if (compara_nome(path, superbloco[i].nome)
+    		&& compara_pai (path, superbloco[i].parent)) {//achou!
     	superbloco[i].direitos = mode;
     	return 0;
     }
@@ -586,11 +706,12 @@ static struct fuse_operations fuse_brisafs = {
 int main(int argc, char *argv[]) {
 
     printf("Iniciando o BrisaFS...\n");
-    printf("\t Tamanho máximo de arquivo = 1 bloco = %d bytes\n", TAM_BLOCO);
+		printf("\t Tamanho do bloco = %d bytes\n", TAM_BLOCO);
+    printf("\t Tamanho máximo de arquivo = %d bytes\n", MAX_FILE_SIZE);
     printf("\t Tamanho do inode: %lu\n", sizeof(inode));
     printf("\t Número máximo de arquivos por superboco: %lu\n", MAX_FILES);
-    printf("\t Número máximo de superbocos: %lu\n", N_SUPERBLOCKS);
-    printf("\t Número máximo de arquivos: %lu\n", N_SUPERBLOCKS * MAX_FILES);
+		printf("\t Número máximo de arquivos: %lu\n", N_SUPERBLOCKS * MAX_FILES);
+    printf("\t Número de superbocos: %lu\n", N_SUPERBLOCKS);
     printf("\t Tamanho do Disco %lu\n", sizeof(disco) * MAX_BLOCOS );
 
     init_brisafs();
