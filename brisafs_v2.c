@@ -365,8 +365,12 @@ int compara_nome (const char *path, const char *nome) {
     char *mp = NULL;
 
     quebra_nome (path, &mn, &mp);
+
+    
 		
 		if (strcmp(nome, mn) == 0) {
+      printf("Nome Calculado: %s\n", mp);
+      printf("Nome Comparado: %s\n", nome);
 			free(mn);
 			free(mp);
 			return 1;
@@ -427,24 +431,34 @@ static int getattr_brisafs(const char *path, struct stat *stbuf) {
         return 0;
     }
 
-    //Busca arquivo na lista de inodes
-    for (int i = 0; i < N_SUPERBLOCKS; i++) {
-        if (superbloco[i].bloco != 0 //Bloco sendo usado
-            && compara_nome (path, superbloco[i].nome)) { //Nome bate
+    char *subdir = NULL;
+    char *filename = NULL;
+    quebra_nome(path, &filename, &subdir);
 
-            stbuf->st_mode = superbloco[i].type | superbloco[i].direitos;
+    for(int i = 0; i < N_SUPERBLOCKS; i++){
+      if(superbloco[i].bloco != 0 && S_ISDIR(superbloco[i].type) && strcmp(superbloco[i].nome, subdir) == 0){//Procuro se o pai e um diretorio e se existe
+        dir = disco + DISCO_OFFSET(superbloco[i].bloco);
+    		uint16_t *d = (uint16_t*) dir;
+    		for(int j = 1; j <= d[0]; j++) {//Apos encontrar o diretorio pai, procuro se existe um arquivo dentro dele correspondente ao que procuro
+    			if(strcmp(filename,superbloco[d[j]].nome) == 0){//Se o arquivo que procuro acessar existe no diretorio, preenche as informacoes ao buffer
+            printf("===============ACHEI O ARQUIVO %s==============\n", filename);
+            stbuf->st_mode = superbloco[d[j]].type | superbloco[d[j]].direitos;
             stbuf->st_nlink = 1;
-            stbuf->st_size = superbloco[i].tamanho;
-            stbuf->st_mtime = superbloco[i].timestamp[0];
-            stbuf->st_atime = superbloco[i].timestamp[1];
-            stbuf->st_uid = superbloco[i].userown;
-            stbuf->st_gid = superbloco[i].groupown;
-            return 0; //OK, arquivo encontrado
-        }
+            stbuf->st_size = superbloco[d[j]].tamanho;
+            stbuf->st_mtime = superbloco[d[j]].timestamp[0];
+            stbuf->st_atime = superbloco[d[j]].timestamp[1];
+            stbuf->st_uid = superbloco[d[j]].userown;
+            stbuf->st_gid = superbloco[d[j]].groupown;
+            return 0;
+          }
+    		}
+        return -ENOENT;//Caso nao encontre o arquivo
+      }
     }
-    //Erro arquivo não encontrado
-    return -ENOENT;
+
+    return -ENOENT; //Caso nao encontre o subdiretorio/pai
 }
+
 
 /* Devolve ao FUSE a estrutura completa do diretório indicado pelo
    parâmetro path. Devolve 0 em caso de sucesso ou um código de
