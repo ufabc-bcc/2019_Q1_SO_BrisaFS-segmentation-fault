@@ -231,51 +231,59 @@ void preenche_bloco (const char *nome, uint16_t direitos, uint16_t tamanho,
 */
 
 /* Preenche os campos do superbloco de índice isuperbloco */
-void preenche_bloco (int isuperbloco, const char *nome, uint16_t direitos,
-                     uint16_t tamanho, uint16_t bloco, const byte *conteudo,
-                     mode_t type) {
-    char *mnome = NULL;
-    char *pai = NULL;
-
-    quebra_nome(nome, &mnome, &pai);
-
-    superbloco[isuperbloco].id = isuperbloco;
-    strcpy(superbloco[isuperbloco].nome, mnome);
-    superbloco[isuperbloco].direitos = direitos;
-    superbloco[isuperbloco].tamanho = tamanho;
-    superbloco[isuperbloco].bloco = bloco;
-    superbloco[isuperbloco].type = type;
-    //strcpy(superbloco[isuperbloco].parent, pai);
-    armazena_data (0, isuperbloco);
+int preenche_bloco (const char *nome, uint16_t direitos, uint16_t tamanho, 
+											const byte *conteudo, mode_t type) {
     
-    // Se for um diretório, inicializa informando que está vazio
-    if (type == S_IFDIR) {
-    	dir = disco + DISCO_OFFSET(bloco);
-    	uint16_t *d = (uint16_t*) dir;
-    	d[0] = 0;
-    } else {
-    	if (conteudo != NULL)
-        memcpy(disco + DISCO_OFFSET(bloco), conteudo, tamanho);
-    	else
-        memset(disco + DISCO_OFFSET(bloco), 0, tamanho);
-    }
+	for (int isuperbloco = 0; isuperbloco < N_SUPERBLOCKS; isuperbloco++) {
+  	if (superbloco[isuperbloco].bloco == 0) {//ninguem usando
     
-    /* Para qualquer um, que não o root, procura o inode do diretório pai e 
-    	 informa a própria criação */
-    if (strcmp(mnome,"/")!=0) {
-    	for (int i = 0; i < N_SUPERBLOCKS; i++) {
-    		if (compara_nome(pai, superbloco[i].nome)) { //Achou o diretório pai
-    			dir = disco + DISCO_OFFSET(superbloco[i].bloco);
-    			uint16_t *d = (uint16_t*) dir;
-    			d[0]++;
-    			d[d[0]] = isuperbloco;
-    			break;
+    	uint16_t bloco = N_SUPERBLOCKS + isuperbloco + 1;
+    
+    	char *mnome = NULL;
+    	char *pai = NULL;
+
+    	quebra_nome(nome, &mnome, &pai);
+
+    	superbloco[isuperbloco].id = isuperbloco;
+    	strcpy(superbloco[isuperbloco].nome, mnome);
+    	superbloco[isuperbloco].direitos = direitos;
+    	superbloco[isuperbloco].tamanho = tamanho;
+    	superbloco[isuperbloco].bloco = bloco;
+    	superbloco[isuperbloco].type = type;
+    	//strcpy(superbloco[isuperbloco].parent, pai);
+    	armazena_data (0, isuperbloco);
+    
+    	// Se for um diretório, inicializa informando que está vazio
+    	if (type == S_IFDIR) {
+    		dir = disco + DISCO_OFFSET(bloco);
+    		uint16_t *d = (uint16_t*) dir;
+    		d[0] = 0;
+    	} else {
+    		if (conteudo != NULL)
+        	memcpy(disco + DISCO_OFFSET(bloco), conteudo, tamanho);
+    		else
+        	memset(disco + DISCO_OFFSET(bloco), 0, tamanho);
+    	}
+    
+    	/* Para qualquer um, que não o root, procura o inode do diretório pai e 
+    	 	 informa a própria criação */
+    	if (strcmp(mnome,"/")!=0) {
+    		for (int i = 0; i < N_SUPERBLOCKS; i++) {
+    			if (compara_nome(pai, superbloco[i].nome)) { //Achou o diretório pai
+    				dir = disco + DISCO_OFFSET(superbloco[i].bloco);
+    				uint16_t *d = (uint16_t*) dir;
+    				d[0]++;
+    				d[d[0]] = isuperbloco;
+    				break;
+    			}
     		}
     	}
+    	free(mnome);
+    	free(pai);
+    	return 0;
     }
-    
-    free(mnome);
-    free(pai);
+	}
+	return 1;
 }
 
 /*
@@ -318,15 +326,15 @@ void init_brisafs() {
 
   if(carrega_disco() == 0){
     //Cria o diretório raiz
-    preenche_bloco (0, "/", DIREITOS_PADRAO, 64, N_SUPERBLOCKS + 1, NULL, S_IFDIR);
+    preenche_bloco ("/", DIREITOS_PADRAO, 64, NULL, S_IFDIR);
     //Cria um arquivo na mão de boas vindas caso nao haja disco
-    char *nome = "/UFABC SO 2019.txt";
+    char *nome = "/BrisaFS.txt";
     //Cuidado! pois se tiver acentos em UTF8 uma letra pode ser mais que um byte
     char *conteudo = "Adoro as aulas de SO da UFABC!\n";
     //0 está sendo usado pelo superbloco. O primeiro livre é o posterior ao N_SUPERBLOCKS
-    preenche_bloco(1, nome, DIREITOS_PADRAO, strlen(conteudo),
-    N_SUPERBLOCKS + 2, (byte*)conteudo, S_IFREG);
-    //preenche_bloco(nome, DIREITOS_PADRAO, strlen(conteudo), conteudo, S_IFREG);
+    //preenche_bloco(1, nome, DIREITOS_PADRAO, strlen(conteudo),
+    //N_SUPERBLOCKS + 2, (byte*)conteudo, S_IFREG);
+    preenche_bloco(nome, DIREITOS_PADRAO, strlen(conteudo), (byte*) conteudo, S_IFREG);
   }
 }
 
@@ -624,9 +632,9 @@ static int write_brisafs(const char *path, const char *buf, size_t size,
     */
     //Se chegou aqui não achou. Entao cria
     //Acha o primeiro bloco vazio
-    //preenche_bloco (path, DIREITOS_PADRAO, size, buf, S_IFREG);
-    //return size;
-    
+    preenche_bloco (path, DIREITOS_PADRAO, size, buf, S_IFREG);
+    return size;
+    /*
     for (int i = 0; i < N_SUPERBLOCKS; i++) {
         if (superbloco[i].bloco == 0) {//ninguem usando
             preenche_bloco (i, path, DIREITOS_PADRAO, size, N_SUPERBLOCKS +
@@ -635,7 +643,7 @@ static int write_brisafs(const char *path, const char *buf, size_t size,
             return size;
         }
     }
-    
+    */
 
     return -EIO;
 }
@@ -713,8 +721,8 @@ static int truncate_brisafs(const char *path, off_t size) {
         return 0;
     } else {// Arquivo novo
         //Acha o primeiro bloco vazio
-        //preenche_bloco (path, DIREITOS_PADRAO, size, NULL, S_IFREG);
-        
+        preenche_bloco (path, DIREITOS_PADRAO, size, NULL, S_IFREG);
+        /*
         for (int i = 0; i < N_SUPERBLOCKS; i++) {
             if (superbloco[i].bloco == 0) {//ninguem usando
                 preenche_bloco (i, path, DIREITOS_PADRAO, size, N_SUPERBLOCKS +
@@ -722,7 +730,7 @@ static int truncate_brisafs(const char *path, off_t size) {
                 break;
             }
         }
-        
+        */
     }
     return 0;
 }
@@ -735,9 +743,9 @@ static int mknod_brisafs(const char *path, mode_t mode, dev_t rdev) {
         //mknod" para instruções de como pegar os direitos e demais
         //informações sobre os arquivos
         //Acha o primeiro bloco vazio
-        //preenche_bloco (path, DIREITOS_PADRAO, 16, NULL, S_IFREG);
-        //return 0;
-        
+        preenche_bloco (path, DIREITOS_PADRAO, 0, NULL, S_IFREG);
+        return 0;
+        /*
         for (int i = 0; i < N_SUPERBLOCKS; i++) {
             if (superbloco[i].bloco == 0) {//ninguem usando
                 preenche_bloco (i, path, DIREITOS_PADRAO, 0, N_SUPERBLOCKS +
@@ -745,7 +753,7 @@ static int mknod_brisafs(const char *path, mode_t mode, dev_t rdev) {
                 return 0;
             }
         }
-        
+        */
         return ENOSPC;
     }
     return EINVAL;
@@ -823,9 +831,9 @@ static int create_brisafs(const char *path, mode_t mode,
     //cuidar disso Veja "man 2 mknod" para instruções de como pegar os
     //direitos e demais informações sobre os arquivos Acha o primeiro
     //bloco vazio
-    //preenche_bloco (path, DIREITOS_PADRAO, 64, NULL, S_IFREG);
-    //return 0;
-    
+    preenche_bloco (path, DIREITOS_PADRAO, 64, NULL, S_IFREG);
+    return 0;
+    /*
     for (int i = 0; i < N_SUPERBLOCKS; i++) {
         if (superbloco[i].bloco == 0) {//ninguem usando
             preenche_bloco (i, path, DIREITOS_PADRAO, 64, N_SUPERBLOCKS +
@@ -833,14 +841,14 @@ static int create_brisafs(const char *path, mode_t mode,
             return 0;
         }
     }
-    
+    */
     return ENOSPC;
 }
 
 static int mkdir_brisafs(const char *path, mode_t type){
-    //preenche_bloco (path, DIREITOS_PADRAO, 64, NULL, S_IFDIR);
-    //return 0;
-    
+    preenche_bloco (path, DIREITOS_PADRAO, 64, NULL, S_IFDIR);
+    return 0;
+    /*
     for (int i = 0; i < N_SUPERBLOCKS; i++) {
         if (superbloco[i].bloco == 0) {//ninguem usando
             preenche_bloco (i, path, DIREITOS_PADRAO, 64, N_SUPERBLOCKS +
@@ -848,7 +856,7 @@ static int mkdir_brisafs(const char *path, mode_t type){
             return 0;
         }
     }
-    
+    */
     return ENOSPC;
 }
 
