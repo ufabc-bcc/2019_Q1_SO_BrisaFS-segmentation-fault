@@ -72,16 +72,16 @@ typedef char byte;
    por exemplo nome, direitos, tamanho, bloco inicial, ... */
 typedef struct {
     uint16_t id; // 2 bytes
-    char nome[250]; // 250 bytes
+    char nome[226]; // 226 bytes
     mode_t type; // 4 bytes
-    uint32_t timestamp[2]; //0: Modificacao, 1: Acesso
-    uint16_t direitos;
-    uint16_t tamanho;
-    uint16_t bloco;
-		uint16_t proxbloco;
+    uint32_t timestamp[2]; //4 bytes -> 0: Modificacao, 1: Acesso
+    uint16_t direitos; // 2 bytes
+    uint16_t tamanho; // 2 bytes
+    uint16_t bloco; // 2 bytes
+		uint16_t proxbloco; // 2 bytes
     uid_t userown; // 4 bytes
     gid_t groupown; // 4 bytes
-} inode;
+} inode;//256 bytes
 
 /* Disco - A variável abaixo representa um disco que pode ser acessado
    por blocos de tamanho TAM_BLOCO com um total de MAX_BLOCOS. */
@@ -226,8 +226,8 @@ int preenche_bloco (const char *nome, uint16_t direitos, uint16_t tamanho,
 					superbloco[bloco_anterior].proxbloco = isuperbloco;
 					bloco_anterior = isuperbloco;
 					
-					printf("Conteúdo: %s\n", conteudo);
-    			printf("Tamanho do Conteúdo: %lu\n", sizeof(conteudo));
+					//printf("Conteúdo: %s\n", conteudo);
+    			//printf("Tamanho do Conteúdo: %lu\n", sizeof(conteudo));
 					if (sizeof(conteudo) > TAM_BLOCO) {
       	  	memcpy(disco + DISCO_OFFSET(bloco), conteudo + DISCO_OFFSET(k), TAM_BLOCO);
       	  	free_space--;
@@ -254,16 +254,45 @@ void init_brisafs() {
   dir = (byte*) disco; //posição 0
 
   if(carrega_disco() == 0){
-    //Cria o diretório raiz
+    //Cria o diretório raiz no inode 0:
     preenche_bloco ("/", DIREITOS_PADRAO, 64, NULL, S_IFDIR);
-    //Cria um arquivo na mão de boas vindas caso nao haja disco
+    //Cria um arquivo com as configurações do disco:
     char *nome = "/BrisaFS.txt";
-    //Cuidado! pois se tiver acentos em UTF8 uma letra pode ser mais que um byte
-    char *conteudo = "Adoro as aulas de SO da UFABC!\n";
-    //0 está sendo usado pelo superbloco. O primeiro livre é o posterior ao N_SUPERBLOCKS
-    //preenche_bloco(1, nome, DIREITOS_PADRAO, strlen(conteudo),
-    //N_SUPERBLOCKS + 2, (byte*)conteudo, S_IFREG);
-    preenche_bloco(nome, DIREITOS_PADRAO, strlen(conteudo), (byte*) conteudo, S_IFREG);
+    
+    char str1[50];
+  	char str2[50];
+  	char str3[50];
+  	char str4[50];
+  	char str5[50];
+  	char str6[50];
+  	char str7[50];
+  	char str8[50];
+  	char str9[50];
+  	char *str = malloc(320);
+    
+    sprintf(str1, "Configurações do BrisaFS:\n");
+		sprintf(str2, "\t Tamanho do bloco = %d bytes\n", TAM_BLOCO);
+    sprintf(str3, "\t Tamanho máximo de arquivo = %d bytes\n", MAX_FILE_SIZE);
+    sprintf(str4, "\t Tamanho do inode: %lu bytes\n", sizeof(inode));
+    sprintf(str5, "\t Quantidade de inodes: %u\n", MIN_DATABLOCKS);
+    sprintf(str6, "\t Número máximo de inodes por superboco: %lu\n", MAX_FILES);
+    sprintf(str7, "\t Número de superbocos: %lu\n", N_SUPERBLOCKS);
+    sprintf(str8, "\t Quantidade de blocos no disco: %lu\n", MAX_BLOCOS);
+    sprintf(str9, "\t Tamanho do Disco: %lu bytes\n", TAM_BLOCO * MAX_BLOCOS);
+    
+    strcpy(str, str1);
+		strcat(str, str2);
+		strcat(str, str3);
+		strcat(str, str4);
+		strcat(str, str5);
+		strcat(str, str6);
+		strcat(str, str7);
+		strcat(str, str8);
+		strcat(str, str9);
+    
+    // Cria o primeiro arquivo no inode 1
+    preenche_bloco(nome, DIREITOS_PADRAO, strlen(str), (byte*) str, S_IFREG);
+    free(str);
   }
 }
 
