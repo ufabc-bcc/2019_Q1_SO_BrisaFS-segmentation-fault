@@ -445,11 +445,11 @@ static int readdir_brisafs(const char *path, void *buf, fuse_fill_dir_t filler,
 				) {
 				int idbuscado =  dir_tree(path,0,0); //passa o inode análisada para ser verificada sua arvore de diretórios
 				if (idbuscado == i){
-    		dir = disco + DISCO_OFFSET(superbloco[i].bloco);
-    		uint16_t *d = (uint16_t*) dir;
-    		for(int j = 1; j <= d[0]; j++) {
-    			filler(buf, superbloco[d[j]].nome, NULL, 0);
-    		}
+          dir = disco + DISCO_OFFSET(superbloco[i].bloco);
+          uint16_t *d = (uint16_t*) dir;
+          for(int j = 1; j <= d[0]; j++) {
+    			  filler(buf, superbloco[d[j]].nome, NULL, 0);
+    		  }
 				}
     	}
     }
@@ -514,44 +514,53 @@ static int open_brisafs(const char *path, struct fuse_file_info *fi) {
    //(FALTA CONSIDERAR ARQUIVOS COM MAIS DE 4K)===========================================
 static int read_brisafs(const char *path, char *buf, size_t size,
                         off_t offset, struct fuse_file_info *fi) {
-		
+	
+  printf("\nCaminho: %s\n", path);
 	//A partir do path, encontra o pai do arquivo.
+
+  //Buscanddo o id do diretorio que possui dado arquivo no path
+  char* c2 = strdup(path);
+	char* p = dirname(c2);
+  int idbuscado =  dir_tree(p,0,0);
+
   for (int i = 0; i < N_SUPERBLOCKS; i++) {
-  	if (superbloco[i].bloco != 0 
-    		&& compara_pai (path, superbloco[i].nome)) { //Achou o diretório pai
-    	dir = disco + DISCO_OFFSET(superbloco[i].bloco);
-    	uint16_t *d = (uint16_t*) dir;
-    	// Varre todos os arquivos dentro do pai para encontrar o arquivo
-    	for(int j = 1; j <= d[0]; j++) {
-    		if (superbloco[d[j]].bloco == 0) //bloco vazio
-          continue;
-        if (compara_nome(path, superbloco[d[j]].nome)) {//achou!
-        	printf("Caminho: %s\n", path);
-        	printf("Buf: %s\n", buf);
-        	printf("Tamanho: %ld\n", size);
-        	printf("Offset: %ld\n", offset);
-        	printf("To lendo o inode %u referente ao bloco %u\n", 
-        		superbloco[d[j]].id, superbloco[d[j]].bloco);
-          size_t len = superbloco[d[j]].tamanho;
-          printf("len: %ld\n", len);
-          armazena_data(1, d[j]);
-          if (offset >= len) {//tentou ler além do fim do arquivo
-            printf("Tentou ler o fim do arquivo\n");
-            return 0;
-          }
-          if (offset + size > len) {
-            printf("offset + size maior que len\n");
-            memcpy(buf, disco + DISCO_OFFSET(superbloco[d[j]].bloco), len - offset);
+  	if (superbloco[i].bloco != 0 && compara_pai (path, superbloco[i].nome)) { //Achou o diretório pai
+      if(idbuscado == i){
+        dir = disco + DISCO_OFFSET(superbloco[i].bloco);
+        uint16_t *d = (uint16_t*) dir;
+        // Varre todos os arquivos dentro do pai para encontrar o arquivo
+        for(int j = 1; j <= d[0]; j++) {
+          if (superbloco[d[j]].bloco == 0) //bloco vazio
+            continue;
+          if (compara_nome(path, superbloco[d[j]].nome)) {//achou!
+            printf("Caminho: %s\n", path);
             printf("Buf: %s\n", buf);
-            return len - offset;
+            printf("Tamanho: %ld\n", size);
+            printf("Offset: %ld\n", offset);
+            printf("To lendo o inode %u referente ao bloco %u\n", 
+              superbloco[d[j]].id, superbloco[d[j]].bloco);
+            size_t len = superbloco[d[j]].tamanho;
+            printf("len: %ld\n", len);
+            armazena_data(1, d[j]);
+            if (offset >= len) {//tentou ler além do fim do arquivo
+              printf("Tentou ler o fim do arquivo\n");
+              return 0;
+            }
+            if (offset + size > len) {
+              printf("offset + size maior que len\n");
+              memcpy(buf, disco + DISCO_OFFSET(superbloco[d[j]].bloco), len - offset);
+              printf("Buf: %s\n", buf);
+              return len - offset;
+            }
+            
+            memcpy(buf, disco + DISCO_OFFSET(superbloco[d[j]].bloco), size);
+            printf("Buf: %s\n", buf);
+            return size;
           }
-          
-          memcpy(buf, disco + DISCO_OFFSET(superbloco[d[j]].bloco), size);
-          printf("Buf: %s\n", buf);
-          return size;
         }
-    	}
-    	break;
+      break;
+      }
+    	//break;
     }
   }
   //Arquivo não encontrado
@@ -570,6 +579,11 @@ static int write_brisafs(const char *path, const char *buf, size_t size,
   //printf("Buf: %s\n", buf);
   printf("Size: %ld\n", size);
   printf("Offset: %ld\n", offset);
+
+  //Buscanddo o id do diretorio que possui dado arquivo no path
+  char* c2 = strdup(path);
+	char* p = dirname(c2);
+  int idbuscado =  dir_tree(p,0,0);
 	
   //A partir do path, encontra o pai do arquivo.
   for (int i = 0; i < N_SUPERBLOCKS; i++) {
@@ -577,89 +591,92 @@ static int write_brisafs(const char *path, const char *buf, size_t size,
     		&& compara_pai (path, superbloco[i].nome)) { //Achou o diretório pai
     	dir = disco + DISCO_OFFSET(superbloco[i].bloco);
     	uint16_t *d = (uint16_t*) dir;
-    	// Varre todos os arquivos dentro do pai para encontrar o arquivo
-    	for(int j = 1; j <= d[0]; j++) {
-        if (superbloco[d[j]].bloco != 0 
-        		&& compara_nome(path, superbloco[d[j]].nome)) {//achou!
-        	
-        	// Quantidade de blocos que o arquivo ocupa atualmente
-  				int ini_blocos = (1+((superbloco[d[j]].tamanho-1) / TAM_BLOCO));
-  				// Quantidade de blocos que o arquivo precisará
-  				int fim_blocos = (1+((superbloco[d[j]].tamanho+size-1) / TAM_BLOCO));
-  				// Quantidade de blocos a mais
-  				int ext_blocos = fim_blocos - ini_blocos;
-  				// Variáveis auxiliares
-  				int supb = d[j];
-    			int wrt_size = TAM_BLOCO - offset;
-    			size_t remaining_size = size - wrt_size;
-  				
-					printf("Blocos que o arquivo ocupa atualmente: %d\n", ini_blocos);
-					printf("Blocos que o arquivo precisará: %d\n", fim_blocos);
-	
-					if (superbloco[supb].tamanho + size > MAX_FILE_SIZE) {
-						printf("Tamanho máximo de arquivo excedido!\n");
-						return EFBIG;
-					} else if (ext_blocos > free_space) {
-						printf("Não há espaço suficiente em disco para este arquivo!\n");
-						return ENOSPC;
-					}
-        	
-        	while (superbloco[supb].proxbloco != 0) {
-        		supb = superbloco[supb].proxbloco;
-        	}
 
-    			if (offset + size > TAM_BLOCO) {
-    				printf("1. To escrevendo %d bytes no bloco %u referente ao inode %u\n\n", 
-        				wrt_size, superbloco[supb].bloco, superbloco[supb].id);
-      	 		memcpy(disco + DISCO_OFFSET(superbloco[supb].bloco) + offset, buf, wrt_size);
-      	 		superbloco[supb].tamanho = offset + wrt_size;
-      	 		armazena_data(0, supb);
-					} else {
-						printf("2. To escrevendo %ld bytes no bloco %u referente ao inode %u\n\n", 
-        			size, superbloco[supb].bloco, superbloco[supb].id);
-						memcpy(disco + DISCO_OFFSET(superbloco[supb].bloco) + offset, buf, size);
-						superbloco[supb].tamanho = offset + size;
-          	armazena_data(0, supb);
-						return size;
-					}
-					
-					for (int k = 0; k < ext_blocos; k++) {
-						printf("k = %d\n", k);
-						for (int isb = 0; isb < N_SUPERBLOCKS; isb++) {
-  						if (superbloco[isb].bloco == 0) { //ninguem usando
-    						uint16_t bloco = N_SUPERBLOCKS + isb + 1;
-    						printf("Inode vazio: %d - Bloco vazio %d\n", isb, bloco);
-    						
-    						superbloco[isb].id = isb;
-    						superbloco[isb].bloco = bloco;
-								superbloco[isb].proxbloco = 0;
-					
-								superbloco[supb].proxbloco = isb;
-								supb = isb;
-					
-								//printf("Conteúdo: %s\n", conteudo);
-    						//printf("Tamanho do Conteúdo: %lu\n", sizeof(conteudo));
-								if (remaining_size > TAM_BLOCO) {
-      	  				memcpy(disco + DISCO_OFFSET(bloco), buf + wrt_size, TAM_BLOCO);
-      	  				wrt_size = wrt_size + TAM_BLOCO;
-      	  				remaining_size = size - wrt_size;
-      	  				superbloco[isb].tamanho = offset + wrt_size;
-      	 					armazena_data(0, isb);
-      	  				free_space--;
-									break;
-								} else {
-									memcpy(disco + DISCO_OFFSET(bloco), buf + wrt_size, remaining_size);
-									superbloco[isb].tamanho = offset + wrt_size;
-      	 					armazena_data(0, isb);
-									free_space--;
-									return size;
-								}
-							}
-						}
-					}
-				}
-			}
+      if(idbuscado == i){
+    	// Varre todos os arquivos dentro do pai para encontrar o arquivo
+        for(int j = 1; j <= d[0]; j++) {
+          if (superbloco[d[j]].bloco != 0 
+              && compara_nome(path, superbloco[d[j]].nome)) {//achou!
+            
+            // Quantidade de blocos que o arquivo ocupa atualmente
+            int ini_blocos = (1+((superbloco[d[j]].tamanho-1) / TAM_BLOCO));
+            // Quantidade de blocos que o arquivo precisará
+            int fim_blocos = (1+((superbloco[d[j]].tamanho+size-1) / TAM_BLOCO));
+            // Quantidade de blocos a mais
+            int ext_blocos = fim_blocos - ini_blocos;
+            // Variáveis auxiliares
+            int supb = d[j];
+            int wrt_size = TAM_BLOCO - offset;
+            size_t remaining_size = size - wrt_size;
+            
+            printf("Blocos que o arquivo ocupa atualmente: %d\n", ini_blocos);
+            printf("Blocos que o arquivo precisará: %d\n", fim_blocos);
+    
+            if (superbloco[supb].tamanho + size > MAX_FILE_SIZE) {
+              printf("Tamanho máximo de arquivo excedido!\n");
+              return EFBIG;
+            } else if (ext_blocos > free_space) {
+              printf("Não há espaço suficiente em disco para este arquivo!\n");
+              return ENOSPC;
+            }
+            
+            while (superbloco[supb].proxbloco != 0) {
+              supb = superbloco[supb].proxbloco;
+            }
+
+            if (offset + size > TAM_BLOCO) {
+              printf("1. To escrevendo %d bytes no bloco %u referente ao inode %u\n\n", 
+                  wrt_size, superbloco[supb].bloco, superbloco[supb].id);
+              memcpy(disco + DISCO_OFFSET(superbloco[supb].bloco) + offset, buf, wrt_size);
+              superbloco[supb].tamanho = offset + wrt_size;
+              armazena_data(0, supb);
+            } else {
+              printf("2. To escrevendo %ld bytes no bloco %u referente ao inode %u\n\n", 
+                size, superbloco[supb].bloco, superbloco[supb].id);
+              memcpy(disco + DISCO_OFFSET(superbloco[supb].bloco) + offset, buf, size);
+              superbloco[supb].tamanho = offset + size;
+              armazena_data(0, supb);
+              return size;
+            }
+            
+            for (int k = 0; k < ext_blocos; k++) {
+              printf("k = %d\n", k);
+              for (int isb = 0; isb < N_SUPERBLOCKS; isb++) {
+                if (superbloco[isb].bloco == 0) { //ninguem usando
+                  uint16_t bloco = N_SUPERBLOCKS + isb + 1;
+                  printf("Inode vazio: %d - Bloco vazio %d\n", isb, bloco);
+                  
+                  superbloco[isb].id = isb;
+                  superbloco[isb].bloco = bloco;
+                  superbloco[isb].proxbloco = 0;
+            
+                  superbloco[supb].proxbloco = isb;
+                  supb = isb;
+            
+                  //printf("Conteúdo: %s\n", conteudo);
+                  //printf("Tamanho do Conteúdo: %lu\n", sizeof(conteudo));
+                  if (remaining_size > TAM_BLOCO) {
+                    memcpy(disco + DISCO_OFFSET(bloco), buf + wrt_size, TAM_BLOCO);
+                    wrt_size = wrt_size + TAM_BLOCO;
+                    remaining_size = size - wrt_size;
+                    superbloco[isb].tamanho = offset + wrt_size;
+                    armazena_data(0, isb);
+                    free_space--;
+                    break;
+                  } else {
+                    memcpy(disco + DISCO_OFFSET(bloco), buf + wrt_size, remaining_size);
+                    superbloco[isb].tamanho = offset + wrt_size;
+                    armazena_data(0, isb);
+                    free_space--;
+                    return size;
+                  }
+                }
+              }
+            }
+          }
+        }
     	break;
+      }
     }
   }
   //Se chegou aqui não achou. Entao cria
@@ -674,30 +691,37 @@ static int write_brisafs(const char *path, const char *buf, size_t size,
 // Remove arquivo (FALTA CONSIDERAR ARQUIVOS COM MAIS DE 4K)===================================
 static int unlink_brisafs(const char *path) {
 
+  //Buscanddo o id do diretorio que possui dado arquivo no path
+  char* c2 = strdup(path);
+	char* p = dirname(c2);
+  int idbuscado =  dir_tree(p,0,0);
+
   //A partir do path, encontra o pai do arquivo.
   for (int i = 0; i < N_SUPERBLOCKS; i++) {
-  	if (superbloco[i].bloco != 0 
-    		&& compara_pai (path, superbloco[i].nome)) { //Achou o diretório pai
-    	dir = disco + DISCO_OFFSET(superbloco[i].bloco);
-    	uint16_t *d = (uint16_t*) dir;
-    	// Varre todos os arquivos dentro do pai para encontrar o arquivo
-    	for(int j = 1; j <= d[0]; j++) {
-    		if (superbloco[d[j]].bloco == 0) //bloco vazio
-      		continue;
-    		if (compara_nome(path, superbloco[d[j]].nome)) {//achou!
-      		// Informa que o bloco está disponível para gravação
-      		superbloco[d[j]].bloco = 0;
-      		superbloco[d[j]].tamanho = 0;
-      		
-      		// Remove o arquivo do diretório pai
-      		d[0]--;
-      		for(int w = j; j <= d[0]; j++) {
-      			d[w] = d[w+1];
-      		}
-      		return 0;
-      	}
-    	}
-    	break;
+  	if (superbloco[i].bloco != 0 && compara_pai (path, superbloco[i].nome)) { //Achou o diretório pai
+
+      if(idbuscado == i){
+        dir = disco + DISCO_OFFSET(superbloco[i].bloco);
+        uint16_t *d = (uint16_t*) dir;
+        // Varre todos os arquivos dentro do pai para encontrar o arquivo
+        for(int j = 1; j <= d[0]; j++) {
+          if (superbloco[d[j]].bloco == 0) //bloco vazio
+            continue;
+          if (compara_nome(path, superbloco[d[j]].nome)) {//achou!
+            // Informa que o bloco está disponível para gravação
+            superbloco[d[j]].bloco = 0;
+            superbloco[d[j]].tamanho = 0;
+            
+            // Remove o arquivo do diretório pai
+            d[0]--;
+            for(int w = j; j <= d[0]; j++) {
+              d[w] = d[w+1];
+            }
+            return 0;
+          }
+        }
+        break;
+      }
     }
   }
   //Arquivo não encontrado
@@ -710,26 +734,34 @@ static int truncate_brisafs(const char *path, off_t size) {
   if (size > MAX_FILE_SIZE) {
   	return EFBIG;
 	}
+
+  //Buscanddo o id do diretorio que possui dado arquivo no path
+  char* c2 = strdup(path);
+	char* p = dirname(c2);
+  int idbuscado =  dir_tree(p,0,0);
 	
 	int findex = -1;
 	//A partir do path, encontra o pai do arquivo.
   for (int i = 0; i < N_SUPERBLOCKS; i++) {
-  	if (superbloco[i].bloco != 0 
-    		&& compara_pai (path, superbloco[i].nome)) { //Achou o diretório pai
-    	dir = disco + DISCO_OFFSET(superbloco[i].bloco);
-    	uint16_t *d = (uint16_t*) dir;
-    	// Varre todos os arquivos dentro do pai para encontrar o arquivo
-    	for(int j = 1; j <= d[0]; j++) {
-    		findex = i;
+  	if (superbloco[i].bloco != 0 && compara_pai (path, superbloco[i].nome)) { //Achou o diretório pai
+
+      if(idbuscado == i){
+        dir = disco + DISCO_OFFSET(superbloco[i].bloco);
+        uint16_t *d = (uint16_t*) dir;
+        // Varre todos os arquivos dentro do pai para encontrar o arquivo
+        for(int j = 1; j <= d[0]; j++) {
+          findex = i;
+          break;
+        }
         break;
-    	}
-    	break;
+      }
     }
   }  	
 	
   //procura o arquivo
   if (findex != -1) {// arquivo existente
-  	superbloco[findex].tamanho = size;
+  	superbloco[findex].tamanho = (uint16_t)size;
+    //preenche_bloco(path,)
     return 0;
   } else {// Arquivo novo
     //Acha o primeiro bloco vazio
@@ -773,28 +805,35 @@ static int utimens_brisafs(const char *path, const struct timespec ts[2]) {
 static int chown_brisafs(const char *path, uid_t userowner, gid_t groupowner){
   printf("O GRUPO É: %d\n", groupowner);
   printf("O USUARIO É: %d\n", userowner);
+
+  //Buscanddo o id do diretorio que possui dado arquivo no path
+  char* c2 = strdup(path);
+	char* p = dirname(c2);
+  int idbuscado =  dir_tree(p,0,0);
     
   //A partir do path, encontra o pai do arquivo.
   for (int i = 0; i < N_SUPERBLOCKS; i++) {
-  	if (superbloco[i].bloco != 0 
-    		&& compara_pai (path, superbloco[i].nome)) { //Achou o diretório pai
-    	dir = disco + DISCO_OFFSET(superbloco[i].bloco);
-    	uint16_t *d = (uint16_t*) dir;
-    	// Varre todos os arquivos dentro do pai para encontrar o arquivo
-    	for(int j = 1; j <= d[0]; j++) {
-    		if (superbloco[d[j]].bloco == 0) //bloco vazio
-        	continue;
-        if (compara_nome(path, superbloco[d[j]].nome)) {//achou!
-        	if(userowner != -1)
-          	superbloco[d[j]].userown = userowner;
+  	if (superbloco[i].bloco != 0 && compara_pai (path, superbloco[i].nome)) { //Achou o diretório pai
 
-          if(groupowner != -1)
-          	superbloco[d[j]].groupown = groupowner;
+      if(idbuscado == i){
+        dir = disco + DISCO_OFFSET(superbloco[i].bloco);
+        uint16_t *d = (uint16_t*) dir;
+        // Varre todos os arquivos dentro do pai para encontrar o arquivo
+        for(int j = 1; j <= d[0]; j++) {
+          if (superbloco[d[j]].bloco == 0) //bloco vazio
+            continue;
+          if (compara_nome(path, superbloco[d[j]].nome)) {//achou!
+            if(userowner != -1)
+              superbloco[d[j]].userown = userowner;
 
-          return 0;
+            if(groupowner != -1)
+              superbloco[d[j]].groupown = groupowner;
+
+            return 0;
+          }
         }
-    	}
-    break;
+      break;
+      }
     }
   }
   //Arquivo não encontrado
@@ -825,21 +864,26 @@ static int mkdir_brisafs(const char *path, mode_t type){
 
 
 static int chmod_brisafs(const char *path, mode_t mode) {
-	
+	//Buscanddo o id do diretorio que possui dado arquivo no path
+  char* c2 = strdup(path);
+	char* p = dirname(c2);
+  int idbuscado =  dir_tree(p,0,0);
+
 	//A partir do path, encontra o pai do arquivo.
   for (int i = 0; i < N_SUPERBLOCKS; i++) {
-  	if (superbloco[i].bloco != 0 
-    		&& compara_pai (path, superbloco[i].nome)) { //Achou o diretório pai
-    	dir = disco + DISCO_OFFSET(superbloco[i].bloco);
-    	uint16_t *d = (uint16_t*) dir;
-    	// Varre todos os arquivos dentro do pai para encontrar o arquivo
-    	for(int j = 1; j <= d[0]; j++) {
-    		if (compara_nome(path, superbloco[d[j]].nome)) {//achou!
-    			superbloco[d[j]].direitos = mode;
-    		return 0;
-    		}
-    	}
-    break;
+  	if (superbloco[i].bloco != 0 && compara_pai (path, superbloco[i].nome)) { //Achou o diretório pai
+      if(idbuscado == i){
+        dir = disco + DISCO_OFFSET(superbloco[i].bloco);
+        uint16_t *d = (uint16_t*) dir;
+        // Varre todos os arquivos dentro do pai para encontrar o arquivo
+        for(int j = 1; j <= d[0]; j++) {
+          if (compara_nome(path, superbloco[d[j]].nome)) {//achou!
+            superbloco[d[j]].direitos = mode;
+          return 0;
+          }
+        }
+      break;
+      }
     }
   }
 	return -errno;
