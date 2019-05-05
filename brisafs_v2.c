@@ -527,14 +527,15 @@ static int read_brisafs(const char *path, char *buf, size_t size,
     return 0;
   }
   
+  // Se o que está sendo lido é mais do que o primeiro bloco de dados
   if (offset + size > TAM_BLOCO) {
-  	if (offset > TAM_BLOCO) {
-  		read_size = 0;
-  		remaining_size = size;
-  		uint32_t read_offset = 0;
+  	if (offset > TAM_BLOCO) { // Se o inicio da leitura for além do primeiro bloco
+  		read_size = 0; // Não leu nada ainda
+  		remaining_size = size; // Falta ler tudo
   		
-  		// Loop para chegar até o offset de leitura
-  		while (read_offset < (offset - TAM_BLOCO)) {
+  		uint32_t read_offset = 0;
+  		// Loop para chegar até o bloco onde está o offset de leitura
+  		while (read_offset < offset) {
   			if (superbloco[supb].proxbloco != 0) {
   				supb = superbloco[supb].proxbloco;
   				read_offset = read_offset + TAM_BLOCO;
@@ -542,20 +543,15 @@ static int read_brisafs(const char *path, char *buf, size_t size,
   				return 0;
   			}
   		}
-  	} else {
+  	} else { // Se o início da leitura for no primeiro bloco
   		printf("offset + size maior que TAM_BLOCO\n");
-  		read_size = TAM_BLOCO - offset;
-  		remaining_size = size - read_size;
+  		read_size = TAM_BLOCO - offset; // Tamanho que será lido
+  		remaining_size = size - read_size; // Tamanho que falta ser lido
   		printf("1. Lendo inode %u referente ao bloco %u\n", superbloco[id].id, superbloco[id].bloco);
     	memcpy(buf, disco + DISCO_OFFSET(superbloco[id].bloco) + offset, read_size);
-    	supb = superbloco[supb].proxbloco;
+    	supb = superbloco[supb].proxbloco; // Próximo bloco de dados
   	}
-  	/*
-  	printf("offset + size maior que len\n");
-    memcpy(buf, disco + DISCO_OFFSET(superbloco[id].bloco), len - offset);
-    printf("Buf: %s\n", buf);
-    return len - offset;*/
-  } else {
+  } else { // Se o que está sendo lido está inteiramente contido no primeiro bloco
   	printf("2. Lendo inode %u referente ao bloco %u\n", superbloco[id].id, superbloco[id].bloco);
   	memcpy(buf, disco + DISCO_OFFSET(superbloco[id].bloco) + offset, size);
   	return size;
@@ -567,13 +563,14 @@ static int read_brisafs(const char *path, char *buf, size_t size,
 		printf("Read Size: %d\n", read_size);
   	printf("Remaining Size: %u\n", remaining_size);
 		
+		// Se o que falta ler é mais do que um bloco
 		if (remaining_size > TAM_BLOCO) {
 			printf("EB1. Lendo inode %u referente ao bloco %u\n", superbloco[supb].id, superbloco[supb].bloco);
 			memcpy(buf+read_size, disco + DISCO_OFFSET(superbloco[supb].bloco), TAM_BLOCO);
     	supb = superbloco[supb].proxbloco;
 			read_size = read_size + TAM_BLOCO;
   		remaining_size = size - read_size;
-		} else {
+		} else { // Se o que falta ler é apenas 1 bloco
 			printf("EB2. Lendo inode %u referente ao bloco %u\n", superbloco[supb].id, superbloco[supb].bloco);
 			memcpy(buf+read_size, disco + DISCO_OFFSET(superbloco[supb].bloco), remaining_size);
   		return size;
@@ -643,13 +640,13 @@ static int write_brisafs(const char *path, const char *buf, size_t size,
     	memcpy(disco + DISCO_OFFSET(superbloco[supb].bloco) + offset, buf, wrt_size);
     	superbloco[id].tamanho = offset + wrt_size;
     	armazena_data(0, id);
-  	} else {
+  	} else { // Se não couber nada no último bloco
   		printf("Veio aqui...\n");
   		wrt_size = 0;
   		remaining_size = size;
   	}
   	// Não tem return, pois ainda falta salvar o resto dos dados
-	} else { // Se o buffer couber no último bloco já existente do arquivo
+	} else { // Se o buffer couber inteiro no último bloco já existente do arquivo
 		printf("2. To escrevendo %ld bytes no bloco %u referente ao inode %u\n\n", 
         		size, superbloco[supb].bloco, superbloco[supb].id);
 		memcpy(disco + DISCO_OFFSET(superbloco[supb].bloco) + offset, buf, size);
@@ -661,11 +658,11 @@ static int write_brisafs(const char *path, const char *buf, size_t size,
 	
 	// Laço para a criação dos blocos extras para acomodar todo o buffer				
 	for (int k = 0; k < ext_blocos; k++) {
-		printf("EB - k = %d\n", k);
+		printf("EB: %d/%d\n", k, ext_blocos);
 		for (int isb = 0; isb < N_SUPERBLOCKS; isb++) {
   		if (superbloco[isb].bloco == 0) { //ninguem usando
     		uint16_t bloco = N_SUPERBLOCKS + isb + 1;
-    		printf("EB - Inode vazio: %d - Bloco vazio %d\n", isb, bloco);
+    		printf("EB - Inode vazio: %d - Bloco vazio: %d\n", isb, bloco);
     		
     		// Preenche apenas o essencial, pois o primeiro inode já tem as infos do arquivo		
     		superbloco[isb].id = isb;
@@ -685,9 +682,9 @@ static int write_brisafs(const char *path, const char *buf, size_t size,
 					printf("EB1. To escrevendo %d bytes no bloco %u referente ao inode %u\n\n", 
         		TAM_BLOCO, superbloco[supb].bloco, superbloco[supb].id);
       		memcpy(disco + DISCO_OFFSET(bloco), buf + wrt_size, TAM_BLOCO);
-      	  wrt_size = wrt_size + TAM_BLOCO;
-      	  remaining_size = size - wrt_size;
-      	  superbloco[id].tamanho = offset + wrt_size;
+      	  wrt_size = wrt_size + TAM_BLOCO; // Atualiza o tanto que já foi escrito
+      	  remaining_size = size - wrt_size; // Atualiza o quanto falta ser escrito
+      	  superbloco[id].tamanho = offset + wrt_size; // Atualiza o tamanho do arquivo
       	 	armazena_data(0, id);
       	  free_space--;
 					break;
@@ -695,8 +692,8 @@ static int write_brisafs(const char *path, const char *buf, size_t size,
 					printf("EB2. To escrevendo %d bytes no bloco %u referente ao inode %u\n\n", 
         		remaining_size, superbloco[supb].bloco, superbloco[supb].id);
 					memcpy(disco + DISCO_OFFSET(bloco), buf + wrt_size, remaining_size);
-					wrt_size = wrt_size + remaining_size;
-					superbloco[id].tamanho = offset + wrt_size;
+					wrt_size = wrt_size + remaining_size; // Atualiza o tanto que já foi escrito
+					superbloco[id].tamanho = offset + wrt_size; // Atualiza o tamanho do arquivo
       	 	armazena_data(0, id);
 					free_space--;
 					return size;
@@ -730,7 +727,8 @@ static int unlink_brisafs(const char *path) {
   // Varre todos os arquivos dentro do pai para encontrar o arquivo
   for(int j = 1; j <= d[0]; j++) {
   	if (compara_nome(path, superbloco[d[j]].nome)) { // achou!
-    	// Informa que o bloco está disponível para gravação
+    	/* Informa que o bloco está disponível para gravação, assim como todos os 
+    	blocos do arquivo, caso ele tenha mais do que 4096 bytes */
       uint16_t sb = d[j];
       while (sb != 0) {
       	superbloco[sb].bloco = 0;
@@ -774,7 +772,8 @@ static int rmdir_brisafs (const char *path) {
     	//Varre o diretório que será apagado, apagando todos os arquivos internos
     	for(int i = 1; i <= d1[0]; i++) {
   			if (superbloco[d1[i]].bloco == 0) { //achou um arquivo dentro do diretorio*/
-    			// Informa que o bloco está disponível para gravação
+    			/* Informa que o bloco está disponível para gravação, assim como todos
+    			 os blocos do arquivo, caso ele tenha mais do que 4096 bytes */
       		uint16_t sb = d1[i];
       		while (sb != 0) {
       			superbloco[sb].bloco = 0;
