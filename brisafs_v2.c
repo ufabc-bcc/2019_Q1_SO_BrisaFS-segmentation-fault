@@ -72,16 +72,16 @@ typedef char byte;
    por exemplo nome, direitos, tamanho, bloco inicial, ... */
 typedef struct {
     uint16_t id; // 2 bytes
-    char nome[224]; // 224 bytes
+    char nome[220]; // 220 bytes
     mode_t type; // 4 bytes
-    uint32_t timestamp[2]; //0: Modificacao, 1: Acesso
-    uint16_t direitos;
-    uint32_t tamanho;
-    uint16_t bloco;
-		uint16_t proxbloco;
+    uint32_t timestamp[2]; // 4 bytes -> 0: Modificacao, 1: Acesso
+    uint16_t direitos; // 2 bytes
+    uint32_t tamanho; // 4 bytes
+    uint16_t bloco; // 2 bytes
+		uint16_t proxbloco; // 2 bytes
     uid_t userown; // 4 bytes
     gid_t groupown; // 4 bytes
-} inode;
+} inode; // 256 bytes
 
 /* Disco - A variável abaixo representa um disco que pode ser acessado
    por blocos de tamanho TAM_BLOCO com um total de MAX_BLOCOS. */
